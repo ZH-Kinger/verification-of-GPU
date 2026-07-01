@@ -1,0 +1,21 @@
+﻿Download manifest
+Generated: 2026-06-15T20:18:12
+Root: C:\Users\asus\Documents\The verify of GPU\staging\downloads
+
+Ubuntu ISO SHA256 expected: e907d92eeec9df64163a7e454cbc8d7755e8ddc7ed42f99dbc80c40f1a138433
+Ubuntu ISO SHA256 actual:   e907d92eeec9df64163a7e454cbc8d7755e8ddc7ed42f99dbc80c40f1a138433
+Ubuntu ISO SHA256 match:    True
+
+Files:
+2c7aeea36dd83c6eafa951ab2b26c037c8342975ca12950509240856b2605bc7  594  iso\SHA256SUMS
+35299a7907a456fb2731af087d7ede11f9864d85b3585dbb1612fe2f442a2c0a  833  iso\SHA256SUMS.gpg
+e907d92eeec9df64163a7e454cbc8d7755e8ddc7ed42f99dbc80c40f1a138433  3405469696  iso\ubuntu-24.04.4-live-server-amd64.iso
+4d3b3bfe6e6a53b2153383b2f74f139339c7e5ffbf657d6af7c3967b8b670386  101334686  nvidia\cuda-compat-13-3_610.43.02-1ubuntu1_amd64.deb
+d2a6b11c096396d868758b86dab1823b25e14d70333f1dfa74da5ddaf6a06dba  4328  nvidia\cuda-keyring_1.1-1_all.deb
+4bf3a081e24603bc995a8aa041ff7819df60563da3e1f7887dae366baed6d45c  911205922  nvidia\datacenter-gpu-manager_3.3.9_amd64.deb
+6913787efb8613f656cd2c0a239390e3a8e2b903b59c2c671522f9989a8d5a56  24318580  nvidia\datacenter-gpu-manager-exporter_4.8.2-1_amd64.deb
+9f1513ff01dbee903dd896b1748eca11645f4a790c0ec15374749e27a37519e4  9474804  nvidia\nvidia-fabricmanager_610.43.02-1ubuntu1_amd64.deb
+3034a054bb4cdf7752ff8dc272564cb105513804bff53538945901b16ca77463  461616501  nvidia\NVIDIA-Linux-x86_64-610.43.02.run
+f175af7b4fc3f1c6313f952a7f9d2e7fe15849ac58cb76340b923ab273ca3a48  1561875  nvidia\Packages.gz
+4474409441e94a6b1f8417b6bcf283e163ad46de5da0d4a190c7153e47c88710  74823  source\nccl-tests-master.zip
+679b8433f3f7cfc6b2409735c620e2e43dfedfdce98b01c51f9fc6f7fef086ae  170743  source\nvbandwidth-main.zip

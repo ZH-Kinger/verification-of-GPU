@@ -1,0 +1,35 @@
+fieldiag goes HERE
+===================
+
+This directory is the expected drop point for the official/OEM fieldiag tool.
+It is the ONLY remaining hard gap in the acceptance package — everything else
+(driver, DCGM, CUDA runtime, precompiled stress binaries, offline rebuild
+toolchain) is already on the USB.
+
+What to copy
+------------
+Copy the fieldiag package contents into this directory so the main executable
+ends up at:
+
+    tools/fieldiag/fieldiag
+
+(Keep any data/config files fieldiag ships with alongside it.)
+
+If the executable has a different name
+--------------------------------------
+Set FIELDIAG_BIN when running the collector, e.g.:
+
+    FIELDIAG_BIN=/mnt/gpu_acceptance/GPU_Offline_Acceptance/tools/fieldiag/<actual_name> \
+      bash scripts/run_acceptance.sh fieldiag
+
+Extra fieldiag arguments for the target SKU (if any) go in FIELDIAG_ARGS.
+
+How it is used
+--------------
+- Boot the target into the default grub entry:
+    "GPU Acceptance - fieldiag mode, persistent, NVIDIA driver blocked"
+- Run: sudo bash scripts/run_acceptance.sh fieldiag
+- run_acceptance.sh / offline_gpu_acceptance_collect.sh auto-detect this binary;
+  if it is missing they record "fieldiag missing" in the log and continue.
+
+You can delete this PLACEHOLDER.txt once the real fieldiag is in place.

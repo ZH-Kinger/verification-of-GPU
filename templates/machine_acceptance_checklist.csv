@@ -1,0 +1,18 @@
+项目,检查内容,通过标准,结果,备注
+资料核对,SN/PN/采购清单/OEM ATP,实物与资料一致,PASS/FAIL/HOLD,
+工具确认,fieldiag 版本和支持 SKU,明确支持当前 GPU SKU,PASS/FAIL/HOLD,
+外观检查,包装/机箱/连接器/散热/液冷,无损伤无渗液,PASS/FAIL,
+U盘启动,UEFI USB 启动进入诊断系统,可正常启动无死机,PASS/FAIL/HOLD,
+GPU识别,lspci/nvidia-smi,数量型号显存正确,PASS/FAIL,
+错误日志,dmesg/journalctl,无 XID/掉卡/ECC/PCIe fatal/PASS,PASS/FAIL,
+fieldiag,官方或 OEM fieldiag,全部 GPU PASS,PASS/FAIL/RETEST/CONFIG,
+ECC,nvidia-smi -q,uncorrectable ECC 为 0 corrected ECC 不持续增长,PASS/FAIL,
+PCIe,nvidia-smi -q/topo,链路宽度和速率符合规格,PASS/FAIL,
+NVLink/NVSwitch,nvidia-smi topo/nvbandwidth,链路完整带宽达标,PASS/FAIL/NA,
+HBM带宽,nvbandwidth/DCGM/OEM工具,达到通过线,PASS/RETEST/FAIL,
+功耗压力,DCGM/nvidia-smi,平均功耗达到 power limit 85%-95%,PASS/RETEST/FAIL,
+温度压力,DCGM/nvidia-smi,无持续 thermal throttle 无关机,PASS/RETEST/FAIL,
+DCGM,dcgmi diag -r 3,全部 PASS,PASS/FAIL/NA,
+日志留档,U盘 logs 目录,原始日志完整可追溯,PASS/FAIL,
+最终结论,整机验收,任意 GPU 不达标整机不通过,PASS/FAIL/RETEST/HOLD,
+

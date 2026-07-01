@@ -1,0 +1,12 @@
+﻿GPU Offline Acceptance USB
+
+Boot partition: UBUNTU_BOOT
+Data partition: GPU_DATA
+Persistence: raw partition; initialize from Linux with scripts/init_persistence_partition.sh
+
+Start here:
+1. Boot target server from UEFI USB.
+2. Mount GPU_DATA in Linux.
+3. Run:
+   cd /mnt/gpu_acceptance/GPU_Offline_Acceptance
+   bash scripts/offline_gpu_acceptance_collect.sh

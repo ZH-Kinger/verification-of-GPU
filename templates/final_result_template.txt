@@ -1,0 +1,36 @@
+服务器 SN：
+验收日期：
+验收人员：
+供应商：
+采购批次：
+
+GPU 数量：
+GPU 型号：
+GPU SN/PN 是否一致：是 / 否
+fieldiag 版本：
+fieldiag 是否支持当前 SKU：是 / 否
+
+外观检查：PASS / FAIL / HOLD
+U 盘启动：PASS / FAIL / HOLD
+GPU 识别：PASS / FAIL
+fieldiag 结果：PASS / FAIL / RETEST / CONFIG
+DCGM r3 结果：PASS / FAIL / 未执行
+ECC 检查：PASS / FAIL
+PCIe 检查：PASS / FAIL
+NVLink/NVSwitch 检查：PASS / FAIL / 不适用
+HBM 带宽检查：PASS / RETEST / FAIL
+压力测试稳定性：PASS / RETEST / FAIL
+错误日志检查：PASS / FAIL
+
+H200 HBM 带宽结果：
+B300/GB300 HBM 带宽结果：
+同批次性能中位数：
+本机最低单卡性能：
+本机最低单卡与中位数比例：
+
+最终结论：PASS / FAIL / RETEST / HOLD
+
+备注：
+
+日志目录：
+
