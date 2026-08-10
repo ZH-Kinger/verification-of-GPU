@@ -17,6 +17,17 @@
 ACC_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ACC_BASE_DIR="$(cd "$ACC_LIB_DIR/../.." && pwd)"
 
+# 采集与解析一律在 C locale 下进行。
+#
+# 很多工具的输出是本地化的：中文环境下 `free` 打的是 "内存：" 而不是 "Mem:"，
+# 于是 awk '/^Mem:/' 一无所获，系统内存和内存识别率两项静默变成 SKIP ——
+# 判定表照常产出，只是少了两行覆盖，现场根本不会注意到。
+# 数字格式（小数点/千分位）同样随 locale 变化，会让所有数值解析失效。
+#
+# 这不影响报表里的中文：那些是我们自己的 UTF-8 字符串，按字节原样输出。
+export LC_ALL=C
+export LANG=C
+
 # ------------------------------------------------------------------ profile
 
 load_profile() {
@@ -114,7 +125,10 @@ run_shell() {
   local name="$1"
   local command="$2"
   echo "[RUN] $name: $command" | tee -a "$LOG_DIR/run.log"
-  bash -lc "$command" > "$LOG_DIR/${name}.txt" 2>&1
+  # 用登录 shell 是为了拿到 profile 里的 PATH（例如 /usr/local/cuda/bin），
+  # 但 /etc/profile 和 ~/.profile 有可能把 locale 改回本地化设置，
+  # 那样输出又会变成中文而解析不出来 —— 所以在命令内部再钉一次。
+  bash -lc "export LC_ALL=C LANG=C; $command" > "$LOG_DIR/${name}.txt" 2>&1
   local rc=$?
   echo "$rc" > "$LOG_DIR/${name}.exit"
   echo "[DONE] $name exit=$rc" | tee -a "$LOG_DIR/run.log"

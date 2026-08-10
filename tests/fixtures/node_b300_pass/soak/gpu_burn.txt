@@ -1,0 +1,9 @@
+GPU 0: OK
+GPU 1: OK
+GPU 2: OK
+GPU 3: OK
+GPU 4: OK
+GPU 5: OK
+GPU 6: OK
+GPU 7: OK
+100.0% proc'd

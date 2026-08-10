@@ -54,7 +54,9 @@ if [ -z "$BURN" ]; then
 fi
 
 log "duration=${DURATION}s (~$((DURATION / 3600))h)  interval=${INTERVAL}s  profile=$ACC_PROFILE"
-echo "$DURATION" > "$SOAK_DIR/duration_seconds.txt"
+echo "$DURATION" > "$SOAK_DIR/duration_planned_seconds.txt"
+SOAK_T0="$(date +%s)"
+echo "$SOAK_T0" > "$SOAK_DIR/started_at.txt"
 
 # ------------------------------------------------------------ 起始快照
 snapshot() {
@@ -107,11 +109,30 @@ nccl_loop() {
   local n=0
   : > "$SOAK_DIR/nccl_loop.txt"
   [ -z "$AR" ] && { echo "all_reduce_perf 未找到，NCCL 持续负载跳过" > "$SOAK_DIR/nccl_loop.txt"; return 0; }
+  local fast_fail=0
   while [ "$(date +%s)" -lt "$end" ]; do
     n=$((n + 1))
+    local t0 rc
+    t0="$(date +%s)"
     echo "===== iteration $n @ $(date -Is) =====" >> "$SOAK_DIR/nccl_loop.txt"
     # shellcheck disable=SC2086
     "$AR" $NCCL_BENCH_ARGS >> "$SOAK_DIR/nccl_loop.txt" 2>&1
+    rc=$?
+    # 二进制起不来时每轮只花几毫秒，18 小时能空转上百万次、
+    # 把日志写到撑爆 U 盘。连续 3 次秒退就停，并把原因留在文件里。
+    if [ "$rc" -ne 0 ] && [ $(( $(date +%s) - t0 )) -lt 5 ]; then
+      fast_fail=$((fast_fail + 1))
+      if [ "$fast_fail" -ge 3 ]; then
+        echo "连续 3 次 all_reduce_perf 秒退（exit=$rc），停止 NCCL 负载循环以免刷爆日志。" \
+          >> "$SOAK_DIR/nccl_loop.txt"
+        echo "nccl loop aborted after 3 immediate failures (exit=$rc)" \
+          > "$SOAK_DIR/nccl_loop_aborted.txt"
+        break
+      fi
+      sleep 5
+    else
+      fast_fail=0
+    fi
   done
   echo "$n" > "$SOAK_DIR/nccl_iterations.txt"
 }
@@ -145,6 +166,9 @@ CLEANED=0
 cleanup() {
   [ "$CLEANED" = "1" ] && return 0
   CLEANED=1
+  # 先把实际时长落盘：被 TERM 杀掉时后面的收尾代码根本执行不到，
+  # 而"跑了多久"是判断这次长稳算不算数的唯一依据。
+  echo "$(( $(date +%s) - SOAK_T0 ))" > "$SOAK_DIR/duration_actual_seconds.txt" 2>/dev/null || true
   local p
   for p in "$SAMPLER_PID" "$DMON_PID" "$NCCL_PID"; do kill_group "$p"; done
   sleep 1
@@ -190,9 +214,13 @@ echo "$((ecc_u_after - ecc_u_before))" > "$SOAK_DIR/ecc_uncorrected_delta.txt"
 echo "$((xid_after - xid_before))"     > "$SOAK_DIR/xid_delta.txt"
 echo "$((crc_after - crc_before))"     > "$SOAK_DIR/nvlink_crc_delta.txt"
 
+SOAK_ELAPSED="$(cat "$SOAK_DIR/duration_actual_seconds.txt" 2>/dev/null \
+                 || echo $(( $(date +%s) - SOAK_T0 )))"
+
 {
   echo "长稳烤机结果（增量口径）"
-  echo "duration            : ${DURATION}s"
+  echo "计划时长            : ${DURATION}s"
+  echo "实际时长            : ${SOAK_ELAPSED}s"
   echo "gpu_burn exit       : $(cat "$SOAK_DIR/gpu_burn.exit")"
   echo "NCCL 迭代次数        : $(cat "$SOAK_DIR/nccl_iterations.txt" 2>/dev/null || echo 0)"
   echo "可纠正 ECC 增量(单卡max): $(cat "$SOAK_DIR/ecc_corrected_delta.txt")"

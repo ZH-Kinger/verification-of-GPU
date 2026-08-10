@@ -39,7 +39,7 @@ echo
 echo "== 2. 单机判定（达标输入，b300_8gpu）=="
 NODE="$WORKROOT/node"
 mkdir -p "$NODE"
-cp "$TEST_DIR/fixtures/node_b300_pass/"* "$NODE/"
+cp -r "$TEST_DIR/fixtures/node_b300_pass/"* "$NODE/"
 out="$(bash "$BASE_DIR/scripts/check_node.sh" "$NODE" b300_8gpu 2>&1)"
 
 expect_in() {  # <输出> <行关键字> <期望判定>
@@ -72,7 +72,10 @@ expect_in "$out" "AllReduce"       PASS   # busbw = 倒数第二列
 expect_in "$out" "AllGather"       PASS   # 列数与 AllReduce 不同，同一套解析都要对
 expect_in "$out" "链路检查"        PASS   # 18 links × 8 GPU = 144
 expect_in "$out" "DCGM Level 4"    SKIP   # 未运行 -> SKIP，不是 PASS
-expect_in "$out" "长稳烤机"        SKIP   # 未运行 -> SKIP
+expect_in "$out" "满载稳定性"      PASS   # §8 跑满且零掉卡
+expect_in "$out" "温度峰值"        PASS   # samples.csv 第一行是表头，必须跳过
+expect_in "$out" "温度波动"        PASS   # 波动=单卡 max-min，不是峰值本身
+expect_in "$out" "NVLink CRC 增量" PASS
 
 if printf '%s' "$out" | grep -q "FAIL=0"; then
   ok "达标输入无 FAIL"
@@ -92,7 +95,7 @@ mutate_expect() {  # <说明> <行关键字> <mutator 函数名>
   local desc="$1" pattern="$2" fn="$3"
   local dir="$WORKROOT/mut_$$_$RANDOM"
   mkdir -p "$dir"
-  cp "$TEST_DIR/fixtures/node_b300_pass/"* "$dir/"
+  cp -r "$TEST_DIR/fixtures/node_b300_pass/"* "$dir/"
   "$fn" "$dir"
   local o
   o="$(bash "$BASE_DIR/scripts/check_node.sh" "$dir" b300_8gpu 2>&1)"
@@ -151,6 +154,13 @@ m_mem_miscmp() { printf 'Hardware Error: miscompare on CPU 3\nStats: Found 0 har
 # 忘了 sudo：一堆项静默变 SKIP，判定表必须把"证据不完整"本身标成 FAIL，
 # 而不是让人从散落的 SKIP 里自己推断。
 m_nonroot()    { echo "collected as non-root (uid=1000)" > "$1/WARNING_NOT_ROOT.txt"; }
+# §8 长稳：被中断的那次必须判 FAIL，而不是按计划时长当成跑完了
+m_soak_short() { echo 7200 > "$1/soak/duration_actual_seconds.txt"; }
+m_soak_temp()  { sed -i 's/,78,/,91,/' "$1/soak/samples.csv"; }          # 峰值超 86
+m_soak_fluct() { awk -F',' 'NR==1{print;next}{if(NR%9==0)$3=70; print $1","$2","$3","$4","$5","$6","$7}' \
+                   "$1/soak/samples.csv" > "$1/soak/s.tmp" && mv "$1/soak/s.tmp" "$1/soak/samples.csv"; }
+m_soak_xid()   { echo 4 > "$1/soak/xid_delta.txt"; }
+m_soak_crc()   { echo 12 > "$1/soak/nvlink_crc_delta.txt"; }
 
 mutate_expect "GPU 少一张"          "GPU 数量"        m_gpu_count
 mutate_expect "出现不可纠正 ECC"    "不可纠正错误"    m_ecc_unc
@@ -183,6 +193,11 @@ mutate_expect "内存条混插 96/128G"  "内存条一致性"    m_mem_mixed
 mutate_expect "内存压测报硬件错误"  "内存压力测试"    m_mem_stress
 mutate_expect "内存压测出现 miscompare" "内存压力测试" m_mem_miscmp
 mutate_expect "非 root 采集"        "采集权限"        m_nonroot
+mutate_expect "长稳被中断未跑完"    "满载稳定性"      m_soak_short
+mutate_expect "长稳温度峰值 91°C"   "温度峰值"        m_soak_temp
+mutate_expect "长稳温度波动超标"    "温度波动"        m_soak_fluct
+mutate_expect "长稳出现 XID"        "XID 增量"        m_soak_xid
+mutate_expect "长稳 NVLink CRC 增长" "NVLink CRC 增量" m_soak_crc
 
 # 特殊一类：驱动返回 N/A。这不是"合格"也不是"不合格"，是"没有数据"，
 # 必须判 SKIP —— 早期实现会把 "[N/A]" 当成 0，直接给出假 PASS。
@@ -190,7 +205,7 @@ expect_verdict() {  # <说明> <行关键字> <mutator> <期望判定>
   local desc="$1" pattern="$2" fn="$3" want="$4"
   local dir="$WORKROOT/na_$$_$RANDOM"
   mkdir -p "$dir"
-  cp "$TEST_DIR/fixtures/node_b300_pass/"* "$dir/"
+  cp -r "$TEST_DIR/fixtures/node_b300_pass/"* "$dir/"
   "$fn" "$dir"
   local line
   line="$(bash "$BASE_DIR/scripts/check_node.sh" "$dir" b300_8gpu 2>&1 | grep -F "$pattern" | head -n1)"
@@ -249,7 +264,7 @@ fi
 # 于是"实测 >= 0"恒成立，检查项静默退化成橡皮图章 —— 比崩溃糟，因为崩溃看得见。
 STRIP="$WORKROOT/stripped"
 mkdir -p "$STRIP"
-cp "$TEST_DIR/fixtures/node_b300_pass/"* "$STRIP/"
+cp -r "$TEST_DIR/fixtures/node_b300_pass/"* "$STRIP/"
 grep -vE '^(SYS_MEM_MIN_TB|SYS_MEM_DETECT_MIN_PCT|NVB_D2D_READ_MIN_GBS|P2P_LAT_MAX_US)=' \
   "$BASE_DIR/profiles/b300_8gpu.env" > "$STRIP/profile.env"
 outs="$(bash "$BASE_DIR/scripts/check_node.sh" "$STRIP" 2>&1)"
@@ -389,13 +404,29 @@ else
 fi
 rm -rf "$BASE_DIR"/logs/*_preflight 2>/dev/null || true
 
+# 采集与解析必须在 C locale 下：中文环境 free 打的是 "内存：" 而非 "Mem:"，
+# 解析器一无所获，对应项静默变 SKIP —— 判定表照出，只是少了覆盖。
+if ( . "$BASE_DIR/scripts/lib/common.sh"; [ "$LC_ALL" = "C" ] ); then
+  ok "共用库钉死 LC_ALL=C（工具输出不随系统语言变化）"
+else
+  bad "共用库未钉死 locale"
+fi
+if grep -q 'export LC_ALL=C LANG=C; \$command' "$BASE_DIR/scripts/lib/common.sh"; then
+  ok "run_shell 在登录 shell 内重新钉死 locale（profile 可能改回去）"
+else
+  bad "run_shell 未防住 profile 重置 locale"
+fi
+
 # ================================================== 7. 同批次比对
 echo
 echo "== 7. 同批次比对（跨机器找掉队的那台）=="
 BATCH="$WORKROOT/batch"
 for i in 1 2 3 4; do
   d="$BATCH/2026-08-10_10000${i}_SN000${i}"
-  mkdir -p "$d"; cp "$TEST_DIR/fixtures/node_b300_pass/"* "$d/"
+  mkdir -p "$d"; cp -r "$TEST_DIR/fixtures/node_b300_pass/"* "$d/"
+  # 批次比对通常在长稳之前做，这里去掉 soak/ 以模拟"温度峰值尚无数据"，
+  # 顺便验证配置了却匹配不到的指标会被显式列出而不是静默跳过。
+  rm -rf "$d/soak"
   printf 'Host SN: SN000%d\n' "$i" > "$d/session.txt"
   # 第 4 台：NVLink 带宽与 AllReduce 都比同批低 ~12%，但每项仍在绝对阈值之上
   if [ "$i" = "4" ]; then

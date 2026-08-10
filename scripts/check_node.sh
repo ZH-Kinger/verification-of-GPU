@@ -627,14 +627,30 @@ fi
 SOAK="$LOG_DIR/soak"
 if [ -d "$SOAK" ]; then
   soak_rc="$(cat "$SOAK/gpu_burn.exit" 2>/dev/null || echo "")"
-  faulty="$(grep -ci 'faulty' "$SOAK/gpu_burn.txt" 2>/dev/null || echo 0)"
+  # grep -c 找不到时会「打印 0 且退出码非 0」，写 || echo 0 会得到两行 "0"。
+  faulty="$(grep -ci 'faulty' "$SOAK/gpu_burn.txt" 2>/dev/null | head -n1)"
+  faulty="${faulty:-0}"
   xid_delta="$(cat "$SOAK/xid_delta.txt" 2>/dev/null || echo "")"
   ecc_delta="$(cat "$SOAK/ecc_corrected_delta.txt" 2>/dev/null || echo "")"
   unc_delta="$(cat "$SOAK/ecc_uncorrected_delta.txt" 2>/dev/null || echo "")"
   crc_delta="$(cat "$SOAK/nvlink_crc_delta.txt" 2>/dev/null || echo "")"
-  dur="$(cat "$SOAK/duration_seconds.txt" 2>/dev/null || echo "?")"
+  # 实际时长优先：被中断的长稳如果报计划时长，会把跑了 2 小时的结果
+  # 写成 18 小时，这是直接影响验收结论的误报。
+  dur="$(cat "$SOAK/duration_actual_seconds.txt" 2>/dev/null \
+         || cat "$SOAK/duration_seconds.txt" 2>/dev/null || echo "?")"
+  dur_planned="$(cat "$SOAK/duration_planned_seconds.txt" 2>/dev/null \
+                 || cat "$SOAK/duration_seconds.txt" 2>/dev/null || echo "?")"
 
-  if [ "$soak_rc" = "0" ] && [ "$faulty" -eq 0 ]; then
+  # 实际时长明显短于计划，说明被中断了 —— 不能按跑完判
+  short_run=0
+  if is_num "$dur" && is_num "$dur_planned"; then
+    awk -v a="$dur" -v p="$dur_planned" 'BEGIN{exit !(a < p*0.98)}' && short_run=1
+  fi
+  if [ "$short_run" = "1" ]; then
+    report_row 8 "长稳烤机" "GPU 满载稳定性" \
+      "实际 ${dur}s / 计划 ${dur_planned}s，未跑完" "跑满 ${dur_planned}s 且零掉卡" FAIL \
+      "长稳被中断（断电/重启/人工终止），本次不构成有效的稳定性证据，需重跑"
+  elif [ "$soak_rc" = "0" ] && [ "$faulty" -eq 0 ]; then
     report_row 8 "长稳烤机" "GPU 满载稳定性" "${dur}s, exit=0, FAULTY=0" "零掉卡" PASS
   else
     report_row 8 "长稳烤机" "GPU 满载稳定性" "${dur}s, exit=${soak_rc:-?}, FAULTY=$faulty" "零掉卡" FAIL
@@ -646,10 +662,18 @@ if [ -d "$SOAK" ]; then
 
   if [ -s "$SOAK/samples.csv" ]; then
     # samples.csv: timestamp,index,temperature,power,sm_clock,...
-    peak="$(awk -F',' 'NR>0{gsub(/ /,"",$3); if($3+0>m) m=$3+0} END{if(m) printf "%.0f", m}' "$SOAK/samples.csv")"
-    fluct="$(awk -F',' '{gsub(/ /,"",$2); gsub(/ /,"",$3);
-              g=$2+0; v=$3+0; if(!(g in mx) || v>mx[g]) mx[g]=v; if(!(g in mn) || v<mn[g]) mn[g]=v}
-              END{m=0; for(g in mx){d=mx[g]-mn[g]; if(d>m)m=d} printf "%.0f", m}' "$SOAK/samples.csv")"
+    # samples.csv 第一行是表头。不跳过的话 "index"/"temperature_gpu" 会被当成 0，
+    # 每张卡的最小温度都变成 0，波动直接等于峰值 —— 一台完全正常的机器会被判 FAIL。
+    peak="$(awk -F',' 'NR>1 && $3+0>0 {gsub(/ /,"",$3); if($3+0>m) m=$3+0}
+                       END{if(m) printf "%.0f", m}' "$SOAK/samples.csv")"
+    fluct="$(awk -F',' 'NR>1 {
+                gsub(/ /,"",$2); gsub(/ /,"",$3);
+                if($2 !~ /^[0-9]+$/ || $3 !~ /^[0-9.]+$/) next;
+                g=$2+0; v=$3+0;
+                if(!(g in mx) || v>mx[g]) mx[g]=v;
+                if(!(g in mn) || v<mn[g]) mn[g]=v }
+              END{ m=0; for(g in mx){ d=mx[g]-mn[g]; if(d>m) m=d } printf "%.0f", m }' \
+              "$SOAK/samples.csv")"
     report_le 8 "长稳烤机" "温度峰值" "$peak" "$GPU_TEMP_MAX_C" "°C"
     report_le 8 "长稳烤机" "温度波动" "$fluct" "$GPU_TEMP_FLUCT_MAX_C" "°C" "单卡窗口内 max-min 的最大值"
   else

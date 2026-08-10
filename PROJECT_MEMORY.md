@@ -53,10 +53,22 @@ SKIP 不等于 PASS：有 SKIP 无 FAIL 判 HOLD
 
 ```text
 ipmitool sensor list 的状态在第 4 列（第 3 列是单位）
+grep -c 找不到时「打印 0 且退出码非 0」，写 || echo 0 会得到两行 "0"
 grep -c 带多个文件会每文件输出一行计数，-h 也不抑制 -> 先 cat 成单流
 num_min/num_max 按值输出 "1" 或 "1.00"，不能拿它的输出做字符串比对
 GNU timeout 默认把子进程放进自己新建的进程组，按作业进程组回收够不着它
   -> soak 的 dmon 必须用 timeout --foreground，否则中断后采样器一直活着
+中文 locale 下 free 打的是「内存：」而非「Mem:」，解析器一无所获，
+  系统内存/内存识别率静默变 SKIP -> 共用库统一 export LC_ALL=C，
+  且 run_shell 要在登录 shell 内再钉一次（profile 可能改回去）
+samples.csv 的表头不跳过，"index" 被当成 0，每卡最小温度=0，
+  温度波动直接等于峰值，正常机器会被判 FAIL
+长稳被中断时报的是「计划时长」而非实际时长 -> 跑了 2 小时会写成 18 小时；
+  实际时长必须在 cleanup 里落盘，因为被 TERM 杀掉时收尾代码执行不到
+频率串 "6400 MT/s" 含斜杠，与拼接分隔符撞车
+Ubuntu 默认 awk 是 mawk：不支持多维数组，length/substr 按字节
+column 来自 bsdextrautils（optional，非 essential），最小镜像里可能没有
+全角破折号是 East Asian Ambiguous，显示宽度随终端在 1/2 间摇摆
 ```
 
 工具缺口 —— 已接进 bootstrap + build（联网工作主机上一条命令补齐）：
