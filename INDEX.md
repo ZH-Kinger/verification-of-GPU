@@ -69,7 +69,8 @@ Each run writes a timestamped dir under `logs/` plus a pre-filled `final_result.
 | `preflight.sh` | 环境预检：计算能力、驱动/CUDA/DCGM 版本、工具在位情况 |
 | `collect_node.sh` | 单机采集《验收标准》§1 §2 §3 §4 §7 |
 | `soak_node.sh` | §8 长稳烤机（gpu_burn + 持续 NCCL + 采样，判增量） |
-| `check_node.sh` | 单机判定 → `acceptance_report.tsv` / `.txt` |
+| `check_node.sh` | 单机判定 → `acceptance_report.tsv` / `.csv` / `.txt` + `per_gpu_detail.tsv` |
+| `compare_batch.sh` | 同批次比对：跨机器找掉队的那台（v1.0 标准的硬性 FAIL 条件） |
 | `set_nvidia_modprobe_params.sh` | §7 要求的 NVIDIA 内核模块参数 |
 | `cluster/setup_ssh.sh` | 多机免密 + 驱动版本一致性核对 |
 | `cluster/roce_check.sh` | §5 RoCE v2 检查与打流 |

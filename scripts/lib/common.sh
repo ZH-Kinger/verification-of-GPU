@@ -63,7 +63,8 @@ apply_profile_defaults() {
     CLUSTER_ALLTOALL_2N_MIN_GBS CLUSTER_SENDRECV_2N_MIN_GBS CLUSTER_BENCH_ARGS \
     DRIVER_MIN_VERSION CUDA_MIN_VERSION NCCL_MIN_VERSION DCGM_MIN_VERSION \
     REQUIRE_NVIDIA_PEERMEM REQUIRE_GDRCOPY NVIDIA_MODPROBE_REQUIRED \
-    SOAK_SECONDS SOAK_SAMPLE_INTERVAL_S SOAK_XID_MAX SOAK_NVLINK_CRC_DELTA_MAX
+    SOAK_SECONDS SOAK_SAMPLE_INTERVAL_S SOAK_XID_MAX SOAK_NVLINK_CRC_DELTA_MAX \
+    BATCH_PASS_PCT BATCH_RETEST_PCT BATCH_MIN_MACHINES
   do
     eval ": \"\${$v:=}\""
   done
@@ -220,11 +221,13 @@ report_init() {
 }
 
 # 余量：相对阈值还剩多少百分比。≥ 类是 (实测-阈值)/阈值，≤ 类是 (阈值-实测)/阈值。
-# 正数=有余量，负数=已越线。阈值为 0（如 ECC=0）时百分比无意义，输出 "—"。
+# 正数=有余量，负数=已越线。阈值为 0（如 ECC=0）时百分比无意义，输出 "-"。
+# 占位符用 ASCII "-" 而非全角破折号：后者是 East Asian Ambiguous 字符，
+# 显示宽度随终端在 1/2 之间摇摆，会让任何按宽度排版的表格错位。
 ACC_MARGIN=""
 calc_margin() { # <measured> <threshold> <ge|le>
   local m="$1" t="$2" dir="$3"
-  ACC_MARGIN="—"
+  ACC_MARGIN="-"
   is_num "$m" && is_num "$t" || return 0
   if awk -v t="$t" 'BEGIN{exit !(t+0==0)}'; then
     # 阈值为 0：给绝对差值而不是百分比
@@ -246,7 +249,7 @@ _cmd_for() { # <item> <module>
 # verdict: PASS | FAIL | SKIP | MANUAL
 report_row() {
   local section="$1" module="$2" item="$3" measured="$4" expected="$5" verdict="$6" note="${7:-}"
-  local margin="${ACC_MARGIN:-—}"
+  local margin="${ACC_MARGIN:--}"
   ACC_MARGIN=""
   local cmd
   cmd="$(_cmd_for "$item" "$module")"
@@ -324,6 +327,64 @@ report_eq() {
   else
     report_row "$section" "$module" "$item" "$measured" "$expected" FAIL "$note"
   fi
+}
+
+# TSV -> CSV，供交付方用 Excel 打开。
+# 两个坑：
+#   1. 字段里本来就有逗号（"--query-gpu=index,name"），必须按 RFC4180 加引号转义，
+#      否则 Excel 会把一行拆成十几列。
+#   2. 不带 BOM 的 UTF-8 CSV，Excel 默认按本地编码解，中文全是乱码。
+tsv_to_csv() {
+  local src="$1" dst="$2"
+  printf '\xEF\xBB\xBF' > "$dst"          # UTF-8 BOM
+  awk -F'\t' '{
+    out="";
+    for (i = 1; i <= NF; i++) {
+      f = $i;
+      gsub(/"/, "\"\"", f);               # 内部双引号翻倍
+      if (f ~ /[",]/ || f ~ /\n/) f = "\"" f "\"";
+      out = out (i > 1 ? "," : "") f;
+    }
+    print out;
+  }' "$src" >> "$dst"
+}
+
+# 按显示宽度对齐的表格输出，替代 column -t。
+#
+# 不是因为 column -t 对不齐 —— 它是多字节感知的，中文表格排得没问题。
+# 真正的理由是依赖：column 来自 bsdextrautils，priority 只是 optional，
+# 最小化的 Ubuntu Server live 镜像里可能没有，而原来的回退是 "|| cat"，
+# 会把一堵 TSV 墙当成"人读表"交出去。这里只用 awk，没有额外依赖。
+#
+# 必须在 mawk 下也能跑 —— Ubuntu 的 /usr/bin/awk 默认指向 mawk，而 mawk：
+#   - 不支持 gawk 的多维数组 a[i][j]，只能用 a[i SUBSEP j]
+#   - length()/substr() 按字节而非字符，逐字符判断宽度的写法直接失效
+# 所以宽度用字节数反推：UTF-8 里续字节固定是 0x80-0xBF，
+#   字符数 = 字节数 - 续字节数；中日韩字符是 3 字节（2 个续字节），显示占 2 列
+#   显示宽度 = 字符数 + 续字节数/2
+# 例 "中文abc"：9 字节、4 续字节 -> 5 字符 + 2 = 7 列，正确。
+fmt_table() {
+  awk -F'\t' '
+    function dwidth(s,   t, cont) {
+      t = s; cont = gsub(/[\200-\277]/, "", t);
+      return (length(s) - cont) + int(cont / 2);
+    }
+    { for (i = 1; i <= NF; i++) { rows[NR SUBSEP i] = $i;
+        if (dwidth($i) > w[i]) w[i] = dwidth($i) }
+      if (NF > maxf) maxf = NF; n = NR }
+    END{
+      for (r = 1; r <= n; r++) {
+        line = "";
+        for (i = 1; i <= maxf; i++) {
+          f = ((r SUBSEP i) in rows) ? rows[r SUBSEP i] : "";
+          pad = w[i] - dwidth(f);
+          line = line f;
+          if (i < maxf) { while (pad-- > 0) line = line " "; line = line "  " }
+        }
+        sub(/[ \t]+$/, "", line);
+        print line;
+      }
+    }' "$@"
 }
 
 report_summary() {

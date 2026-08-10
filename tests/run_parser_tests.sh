@@ -268,6 +268,49 @@ else
   bad "旧 profile 快照处理有问题（崩溃或未提示）"
 fi
 
+# 输出层：CSV 交付 + 无外部依赖的表格排版
+if [ -s "$NODE/acceptance_report.csv" ]; then
+  # Excel 按本地编码解无 BOM 的 UTF-8，中文会全乱码
+  if head -c3 "$NODE/acceptance_report.csv" | od -An -tx1 | grep -q 'ef bb bf'; then
+    ok "CSV 带 UTF-8 BOM（Excel 直接打开不乱码）"
+  else
+    bad "CSV 缺少 UTF-8 BOM"
+  fi
+  # 字段里本来就含逗号（--query-gpu=index,name），必须加引号，否则 Excel 拆错列
+  if grep -q '"nvidia-smi --query-gpu=index,name' "$NODE/acceptance_report.csv" \
+     || grep -qE '"[^"]*,[^"]*"' "$NODE/acceptance_report.csv"; then
+    ok "含逗号的字段已按 RFC4180 加引号"
+  else
+    bad "含逗号的字段未加引号，Excel 会拆错列"
+  fi
+  # 列数必须与 TSV 一致（用 python 按 CSV 规则解析，而不是简单数逗号）
+  if command -v python3 >/dev/null 2>&1; then
+    ncsv="$(python3 -c "
+import csv,sys
+with open('$NODE/acceptance_report.csv',encoding='utf-8-sig') as f:
+    print(len(next(csv.reader(f))))")"
+    ntsv="$(head -n1 "$NODE/acceptance_report.tsv" | awk -F'\t' '{print NF}')"
+    if [ "$ncsv" = "$ntsv" ]; then
+      ok "CSV 列数与 TSV 一致（$ncsv 列）"
+    else
+      bad "CSV 列数 $ncsv 与 TSV 列数 $ntsv 不符"
+    fi
+  fi
+else
+  bad "未生成交付用 CSV"
+fi
+# fmt_table 与 column -t 输出应当一致（等价性），且不依赖 bsdextrautils
+if command -v column >/dev/null 2>&1; then
+  # 行尾空白不比较：column 保留末列 padding，fmt_table 去掉，两者都无碍阅读
+  a="$(head -n8 "$NODE/acceptance_report.tsv" | column -t -s "$(printf '\t')" | sed 's/[[:space:]]*$//')"
+  b="$(head -n8 "$NODE/acceptance_report.tsv" | { . "$BASE_DIR/scripts/lib/common.sh"; fmt_table; } | sed 's/[[:space:]]*$//')"
+  if [ "$a" = "$b" ]; then
+    ok "fmt_table 与 column -t 输出一致（且不依赖 bsdextrautils）"
+  else
+    bad "fmt_table 与 column -t 输出不一致"
+  fi
+fi
+
 # ==================================================== 4. profile 切换
 echo
 echo "== 4. profile 切换（阈值来自 profile，不是硬编码）=="
@@ -346,9 +389,54 @@ else
 fi
 rm -rf "$BASE_DIR"/logs/*_preflight 2>/dev/null || true
 
-# ====================================== 7. 真驱动 smoke test（有 nvidia-smi 才跑）
+# ================================================== 7. 同批次比对
 echo
-echo "== 7. 真驱动 smoke test =="
+echo "== 7. 同批次比对（跨机器找掉队的那台）=="
+BATCH="$WORKROOT/batch"
+for i in 1 2 3 4; do
+  d="$BATCH/2026-08-10_10000${i}_SN000${i}"
+  mkdir -p "$d"; cp "$TEST_DIR/fixtures/node_b300_pass/"* "$d/"
+  printf 'Host SN: SN000%d\n' "$i" > "$d/session.txt"
+  # 第 4 台：NVLink 带宽与 AllReduce 都比同批低 ~12%，但每项仍在绝对阈值之上
+  if [ "$i" = "4" ]; then
+    sed -i 's/795\.44/697.20/;s/801\.23/700.10/;s/800\.10/699.50/' "$d/nvb_d2d.txt"
+    sed -i 's/845\.60/742.30/;s/812\.30/735.00/' "$d/nccl_all_reduce.txt"
+  fi
+  bash "$BASE_DIR/scripts/check_node.sh" "$d" b300_8gpu >/dev/null 2>&1
+done
+outb="$(OUT_DIR="$WORKROOT/reports" bash "$BASE_DIR/scripts/compare_batch.sh" "$BATCH" b300_8gpu 2>&1)"
+brc=$?
+if printf '%s' "$outb" | grep -q '4 台机器'; then
+  ok "自动发现并汇总 4 台机器的判定表"
+else
+  bad "未能收集到 4 台机器"
+fi
+# 掉队机器每项都过了绝对阈值，只有横向比对才看得出来
+if printf '%s' "$outb" | grep -A5 '掉队清单' | grep -q 'SN0004'; then
+  ok "识别出掉队机器 SN0004（各项均过绝对阈值，仅同批次比对能发现）"
+else
+  bad "未识别出掉队机器"
+fi
+if printf '%s' "$outb" | grep -A5 '掉队清单' | grep -q 'SN0001\|SN0002\|SN0003'; then
+  bad "正常机器被误判为掉队"
+else
+  ok "正常机器未被误判"
+fi
+# 配置了却匹配不到的指标必须出声，不能静默消失
+if printf '%s' "$outb" | grep -q '未参与比对'; then
+  ok "无数据的指标被显式列出（不会静默跳过）"
+else
+  bad "无数据的指标被静默跳过了"
+fi
+if [ "$brc" -ne 0 ]; then
+  ok "存在掉队机器时退出码非 0（可用于流水线拦截）"
+else
+  bad "存在掉队机器但退出码为 0"
+fi
+
+# ====================================== 8. 真驱动 smoke test（有 nvidia-smi 才跑）
+echo
+echo "== 8. 真驱动 smoke test =="
 if ! command -v nvidia-smi >/dev/null 2>&1; then
   echo "  (跳过：本机没有 nvidia-smi)"
 else

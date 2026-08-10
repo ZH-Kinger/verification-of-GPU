@@ -754,12 +754,12 @@ report_summary || true
   echo "------------------------------------------------------------------------------"
   # 按章节排序：采集顺序不等于标准的章节顺序（如温度项在 §3 处理时才拿得到数据）
   { head -n1 "$LOG_DIR/acceptance_report.tsv"; tail -n +2 "$LOG_DIR/acceptance_report.tsv" | sort -s -k1,1n; } \
-    | { column -t -s $'\t' 2>/dev/null || cat; }
+    | fmt_table
   echo
   if [ -s "$LOG_DIR/per_gpu_detail.tsv" ]; then
     echo "二、每张 GPU 实测明细"
     echo "------------------------------------------------------------------------------"
-    column -t -s $'\t' "$LOG_DIR/per_gpu_detail.tsv" 2>/dev/null || cat "$LOG_DIR/per_gpu_detail.tsv"
+    fmt_table "$LOG_DIR/per_gpu_detail.tsv"
     [ -n "$per_gpu_note" ] && { echo; echo "$per_gpu_note"; }
     echo
   fi
@@ -771,8 +771,14 @@ report_summary || true
   echo "      阈值为 0 的项（ECC/CRC 等）给绝对差值。判定 MANUAL 的项需人工核对。"
 } > "$LOG_DIR/acceptance_report.txt"
 
+# 交付用 CSV（Excel 可直接打开）
+tsv_to_csv "$LOG_DIR/acceptance_report.tsv" "$LOG_DIR/acceptance_report.csv"
+[ -s "$LOG_DIR/per_gpu_detail.tsv" ] && \
+  tsv_to_csv "$LOG_DIR/per_gpu_detail.tsv" "$LOG_DIR/per_gpu_detail.csv"
+
 echo
 echo "判定表(人读): $LOG_DIR/acceptance_report.txt"
 echo "判定表(机读): $LOG_DIR/acceptance_report.tsv"
+echo "判定表(Excel): $LOG_DIR/acceptance_report.csv"
 [ -s "$LOG_DIR/per_gpu_detail.tsv" ] && echo "每卡明细:     $LOG_DIR/per_gpu_detail.tsv"
 [ "${ACC_VERDICT:-FAIL}" = "PASS" ]

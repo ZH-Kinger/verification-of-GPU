@@ -81,6 +81,18 @@ threshold, which is what distinguishes a comfortable pass from one scraping the 
 Verdicts are PASS / FAIL / SKIP / MANUAL; any FAIL → machine FAIL, no FAIL but any
 SKIP → **HOLD** (a missing tool must never read as a pass).
 
+`compare_batch.sh` then compares finished reports **across machines**: a node that clears
+every absolute threshold but sits 12% under the batch median is usually a cooling or power
+problem, and its own report cannot show that. v1.0 的标准 makes >10% below median a hard
+FAIL. Exit codes carry the verdict — `run_acceptance.sh` and `compare_batch.sh` both exit
+non-zero on failure so a batch loop can gate on them.
+
+Three rules the whole reporting layer depends on, all learned from real bugs:
+a missing threshold must SKIP rather than compare against an implicit 0; a configured
+metric that matches nothing must be listed, not silently dropped; and `${VAR:-0}`-style
+fallbacks are themselves the vulnerability, because 0 is a valid number that passes every
+`>=` check.
+
 It calls `offline_gpu_acceptance_collect.sh` (the low-level collector that runs each diagnostic,
 captures `<name>.txt`/`<name>.exit`, and writes a timestamped `logs/<ts>_<SN>/` with a pre-filled
 `final_result.txt`). Env overrides that matter: `FIELDIAG_BIN`, `FIELDIAG_ARGS`,

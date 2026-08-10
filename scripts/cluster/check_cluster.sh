@@ -201,7 +201,7 @@ report_summary || true
   echo " 生成时间 : $(date '+%F %T')"
   echo
   { head -n1 "$PARENT/cluster_report.tsv"; tail -n +2 "$PARENT/cluster_report.tsv" | sort -s -k1,1n; } \
-    | { column -t -s $'\t' 2>/dev/null || cat; }
+    | fmt_table
   echo
   cat "$PARENT/cluster_report.tsv.summary"
   echo
@@ -209,6 +209,9 @@ report_summary || true
   echo "      不等于通过。PFC 与暂停帧比例标 MANUAL：计数口径随网卡固件变化。"
 } > "$PARENT/cluster_report.txt"
 
+tsv_to_csv "$PARENT/cluster_report.tsv" "$PARENT/cluster_report.csv"
+
 echo
 echo "判定表: $PARENT/cluster_report.txt"
+echo "Excel:  $PARENT/cluster_report.csv"
 [ "${ACC_VERDICT:-FAIL}" = "PASS" ]
