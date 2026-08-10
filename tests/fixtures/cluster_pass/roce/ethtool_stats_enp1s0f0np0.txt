@@ -1,0 +1,4 @@
+     rx_prio3_pause: 15234
+     tx_prio3_pause: 14980
+     rx_discards: 0
+     tx_discards: 0

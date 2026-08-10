@@ -38,15 +38,48 @@ run on the newer-glibc target; but linking a noble `.so` on the jammy host fails
 GPU_DATA is **exFAT**: do not compile on it, and treat the exec bit as synthesized by the
 mount, not stored. Compile off-USB and copy binaries in.
 
-## Two run modes (selected at grub, orchestrated by one script)
+## Two acceptance tracks, two grub modes
 
-The grub menu (`boot_configs/`) offers **fieldiag mode** (default, NVIDIA/nouveau drivers
-blacklisted) and **dcgm mode** (driver allowed). `scripts/run_acceptance.sh` wraps everything:
+Since v3.0 the project serves **two acceptance chains** that share one threshold system:
+
+- **单机离线压测** (single-node, offline, USB) — 《验收标准》§1 §2 §3 §4 §7 §8.
+  `scripts/preflight.sh` → `collect_node.sh` → `check_node.sh`, plus `soak_node.sh` for §8.
+- **多机压测** (multi-node, needs network + MPI + passwordless SSH) — §5 §6.
+  `scripts/cluster/{roce_check,nccl_scale,check_cluster}.sh`. Does **not** run on the
+  live USB; the nodes use their own OS. See `docs/cluster_runbook.md`.
+
+**All numeric thresholds live in `profiles/<name>.env`** — GPU count, memory, TDP,
+bandwidth floors, temperature, *and* the per-model driver/CUDA/NCCL/DCGM version
+requirements plus which `tools/<subdir>` binary set to use. Different GPU models need
+different CUDA lines; never hardcode a version or a threshold in a script. Adding a
+model = adding one profile file.
+
+Every threshold carries a source tag: `[标准]` (verbatim from the customer document —
+do not change), `[推导]` (derived, with the derivation written out), `[待校准]`
+(placeholder pending first-batch measurements). A derived threshold must state what it
+is meant to catch — e.g. the system-memory floor sits at 3000 GiB because a full
+24×128GiB config reports ~3047 GiB after kernel reserve while one missing DIMM is
+2944 GiB; the earlier guess of 2900 would have passed a machine with a dead DIMM.
+
+The grub menu (`boot_configs/`) still offers **fieldiag mode** (default, NVIDIA/nouveau
+blacklisted) and **dcgm mode** (driver allowed). fieldiag remains the stage-1 hardware
+standard; the 《验收标准》 table is stage 2 and needs the driver, so it runs in dcgm mode.
 
 ```bash
-sudo bash scripts/run_acceptance.sh fieldiag   # hardware-first; runs tools/fieldiag/fieldiag; skips driver-only tools
-sudo bash scripts/run_acceptance.sh dcgm        # installs offline tools, then DCGM + nvbandwidth; skips fieldiag
+sudo bash scripts/run_acceptance.sh fieldiag              # 阶段一：hardware-first, driver blocked
+sudo bash scripts/run_acceptance.sh standard b300_8gpu    # 阶段二：preflight + collect + auto-verdict
+sudo bash scripts/run_acceptance.sh soak <log_dir>        # §8 long soak, then re-verdict
+sudo bash scripts/run_acceptance.sh dcgm                  # legacy v1.0 collection path
 ```
+
+`check_node.sh` emits `acceptance_report.tsv`/`.txt` plus `per_gpu_detail.tsv`.
+The report columns mirror the customer's own table (章节/模块/测试项/测试手段·命令)
+and add 实测值/余量/判定. **Measured values must always be concrete numbers, never
+yes/no** — `8/8 Enabled`, `56/56 个 GPU 对为 NV18`, `12 个，转速 8000~8600 RPM` — because
+the report is the acceptance evidence. 余量 is the percentage headroom against the
+threshold, which is what distinguishes a comfortable pass from one scraping the line.
+Verdicts are PASS / FAIL / SKIP / MANUAL; any FAIL → machine FAIL, no FAIL but any
+SKIP → **HOLD** (a missing tool must never read as a pass).
 
 It calls `offline_gpu_acceptance_collect.sh` (the low-level collector that runs each diagnostic,
 captures `<name>.txt`/`<name>.exit`, and writes a timestamped `logs/<ts>_<SN>/` with a pre-filled
@@ -97,9 +130,34 @@ cuda-samples uses a `cpp/` layout and dropped `bandwidthTest`); some sample `CMa
 hardcode an architecture list containing `sm_110`, which CUDA 12.8 rejects — it is `sed`-patched
 to `CUDA_ARCH`. nccl-tests is `make MPI=0` with `NVCC_GENCODE`.
 
+## Known conflicts with the customer standard (do not "fix" silently)
+
+- **CUDA ≥ 13.0 vs the shipped 12.8 line.** Blackwell Ultra is expected to be `sm_103`,
+  which CUDA 12.8 cannot target; sm_100 cubins will not load on it. Decision on record:
+  ship the scripts first, confirm the real compute capability with `preflight.sh` on a
+  target, then rebuild. Full plan in `docs/cuda_arch_decision.md`.
+- **DCGM 3.3.9 does not support Blackwell.** `b300_8gpu.env` requires ≥ 4.0. The checker
+  treats "JSON has no Pass records" as FAIL, not as a silent pass.
+- **§8 says 24h in the title but `-tc 64800` (18h) in the command**, and the §3 ECC row
+  also says 18h. Profile follows the command; confirm with the customer before signing.
+- **fieldiag is absent from the customer standard** but is still stage 1 here.
+
 ## Working on this repo
 
-- Validate script edits with `bash -n scripts/*.sh` (no runtime here can exercise them).
+- **Run `bash tests/run_parser_tests.sh` after any change to `check_node.sh`,
+  `check_cluster.sh`, `lib/common.sh`, or a profile.** No GPU or network required.
+  It syntax-checks every script, replays synthetic "fully compliant" single-node and
+  cluster fixtures, then applies ~28 targeted degradations asserting each threshold
+  actually bites, and finally (only if `nvidia-smi` exists) validates every
+  `--query-gpu` field name against the real driver and checks the soak harness leaves
+  no stray background processes. Add a degradation case when you add a standard item.
+- Every bug found in this codebase so far was invisible to `bash -n` and only surfaced
+  by running the parsers on realistic output: `ipmitool`'s status is column 4 not 3;
+  `grep -c` with multiple files prints one count *per file* even with `-h`; `num_min`
+  renders `1` or `1.00` depending on the value so its output must never be string-compared;
+  `nvidia-smi` returning `[N/A]` became `0` and produced a false PASS; GNU `timeout`
+  puts its child in a *new* process group so killing the job's group misses it.
+  Treat "it looks right" as unverified.
 - Scripts self-locate `BASE_DIR` relative to `scripts/`; keep them runnable from any cwd and do
   not move files between `downloads/` subdirs without updating script paths.
 - Integrity manifests: `tools/bin_MANIFEST.sha256`, `downloads/offline_deb_noble/MANIFEST.sha256`,

@@ -1,0 +1,3 @@
+#       size         count      type     time   algbw   busbw #wrong     time   algbw   busbw #wrong
+   536870912      67108864     float   1010.2  531.40  660.10      0   1005.1  534.2  672.55      0
+# Avg bus bandwidth    : 666.3

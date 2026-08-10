@@ -1,0 +1,8 @@
+Running device_to_device_memcpy_read_ce.
+memcpy CE GPU(row) -> GPU(column) bandwidth (GB/s)
+           0         1         2         3
+0          N/A    801.23    799.10    795.44
+1       800.10       N/A    798.22    801.99
+2       797.31    800.02       N/A    802.10
+3       799.88    801.44    800.03       N/A
+SUM device_to_device_memcpy_read_ce 9597.10

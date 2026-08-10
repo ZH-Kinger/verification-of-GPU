@@ -1,0 +1,3 @@
+    Clocks Event Reasons
+        HW Slowdown : Not Active
+        HW Thermal Slowdown : Not Active

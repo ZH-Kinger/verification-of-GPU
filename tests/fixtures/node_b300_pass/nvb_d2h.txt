@@ -1,0 +1,5 @@
+Running host_to_device_memcpy_ce.
+memcpy CE CPU(row) -> GPU(column) bandwidth (GB/s)
+           0         1         2         3         4         5         6         7
+0      58.23     57.98     58.11     57.50     58.01     57.88     56.02     58.30
+SUM host_to_device_memcpy_ce 461.03

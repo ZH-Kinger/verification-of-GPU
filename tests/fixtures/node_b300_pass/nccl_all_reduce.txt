@@ -1,0 +1,4 @@
+#       size         count      type   redop    root     time   algbw   busbw #wrong     time   algbw   busbw #wrong
+   536870912     134217728     float     sum      -1   1250.3  429.40  751.45      0   1240.1  432.9  812.30      0
+  8589934592    2147483648     float     sum      -1  19800.5  433.80  820.15      0  19750.2  434.9  845.60      0
+# Avg bus bandwidth    : 807.375

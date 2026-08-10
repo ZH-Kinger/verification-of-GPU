@@ -1,0 +1,3 @@
+GPU 0: OK
+GPU 1: OK
+100% proc

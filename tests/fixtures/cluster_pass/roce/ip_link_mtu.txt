@@ -1,0 +1,2 @@
+enp1s0f0np0 mtu 9000
+enp1s0f1np1 mtu 9000

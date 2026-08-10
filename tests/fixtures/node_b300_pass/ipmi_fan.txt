@@ -1,0 +1,2 @@
+FAN1 | 8000.000 | RPM | ok | na | na
+FAN2 | 8100.000 | RPM | ok | na | na

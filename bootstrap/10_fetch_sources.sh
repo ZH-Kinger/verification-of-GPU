@@ -18,5 +18,11 @@ fetch "https://github.com/NVIDIA/nvbandwidth/archive/refs/heads/main.zip"    "nv
 fetch "https://github.com/NVIDIA/nccl-tests/archive/refs/heads/master.zip"   "nccl-tests-master.zip"
 fetch "https://github.com/NVIDIA/cuda-samples/archive/refs/heads/master.zip" "cuda-samples-master.zip"
 
+# 《验收标准》新增要求的两个来源：
+# gpu-burn —— §3 的 1 小时压测和 §8 的长稳烤机都点名用它，项目原先没有。
+fetch "https://github.com/wilicc/gpu-burn/archive/refs/heads/master.zip"     "gpu-burn-master.zip"
+# 旧版 cuda-samples —— §7 点名要 bandwidthTest，新版 master 已经删除了它。
+fetch "https://github.com/NVIDIA/cuda-samples/archive/refs/tags/v12.3.zip"   "cuda-samples-v12.3.zip"
+
 echo "Sources in $DEST:"
 ls -la "$DEST"/*.zip

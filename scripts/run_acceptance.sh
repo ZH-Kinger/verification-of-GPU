@@ -4,21 +4,35 @@
 # Wraps the existing helper scripts into a single entry point for field use.
 #
 # Usage:
-#   sudo bash scripts/run_acceptance.sh [fieldiag|dcgm]
+#   sudo bash scripts/run_acceptance.sh [fieldiag|dcgm|standard|soak] [profile]
+#
+# 验收分两个阶段：阶段一 fieldiag（硬件主标准），阶段二 standard（甲方《验收标准》表）。
 #
 # Modes:
 #   fieldiag (default)
-#       Hardware-first acceptance. Assumes the machine was booted into the
-#       "fieldiag mode, NVIDIA driver blocked" grub entry. Runs fieldiag and
+#       阶段一。Hardware-first acceptance. Assumes the machine was booted into
+#       the "fieldiag mode, NVIDIA driver blocked" grub entry. Runs fieldiag and
 #       collects logs. Driver-dependent tools (DCGM, nvbandwidth) are skipped
 #       because the NVIDIA driver is intentionally not loaded.
 #
 #   dcgm
-#       System/stress acceptance. Assumes the machine was booted into the
-#       "dcgm mode, NVIDIA driver allowed" grub entry. Installs the offline
-#       NVIDIA driver/DCGM/Fabric Manager packages, best-effort builds the
-#       official stress-tool sources, then collects logs with DCGM and
-#       nvbandwidth enabled. fieldiag is skipped in this mode.
+#       Legacy 驱动模式采集（v1.0 流程）。Installs the offline NVIDIA
+#       driver/DCGM/Fabric Manager packages, best-effort builds the official
+#       stress-tool sources, then collects logs with DCGM and nvbandwidth
+#       enabled. fieldiag is skipped in this mode.
+#
+#   standard
+#       阶段二，单机离线压测。需先从 grub 选 dcgm 模式（驱动已加载）。
+#       依次执行 preflight.sh → collect_node.sh → check_node.sh，
+#       按 profiles/<profile>.env 的阈值输出 PASS/FAIL 判定表。
+#
+#   soak
+#       阶段二的长稳烤机（§8）。用法：
+#         sudo bash scripts/run_acceptance.sh soak <log_dir> [profile]
+#       跑完自动重新判定，把 §8 的结果并入同一张表。
+#
+# profile: b300_8gpu（默认）或 h200_8gpu。不同机型的显存/功耗/带宽阈值和
+#          驱动/CUDA/NCCL/DCGM 版本要求都不同，全部由 profile 决定。
 #
 # Both modes write a timestamped log directory under logs/ and drop a
 # pre-filled final_result.txt skeleton into that directory.
@@ -39,14 +53,14 @@ BASE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 MODE="${1:-${MODE:-fieldiag}}"
 
 case "$MODE" in
-  fieldiag|dcgm) ;;
+  fieldiag|dcgm|standard|soak) ;;
   -h|--help)
     awk 'NR>1 && /^#/ {sub(/^# ?/,""); print; next} NR>1 {exit}' "${BASH_SOURCE[0]}"
     exit 0
     ;;
   *)
     echo "Unknown mode: $MODE"
-    echo "Usage: sudo bash scripts/run_acceptance.sh [fieldiag|dcgm]"
+    echo "Usage: sudo bash scripts/run_acceptance.sh [fieldiag|dcgm|standard|soak] [profile]"
     exit 2
     ;;
 esac
@@ -107,6 +121,47 @@ case "$MODE" in
     export RUN_DCGM="${RUN_DCGM:-1}"
     export RUN_NVBANDWIDTH="${RUN_NVBANDWIDTH:-1}"
     run_collect
+    ;;
+
+  standard)
+    # 阶段二：按甲方《验收标准》表逐项采集并自动判定（单机离线压测）。
+    PROFILE_NAME_ARG="${2:-${PROFILE:-b300_8gpu}}"
+    log "阶段二 — 单机离线压测，profile=$PROFILE_NAME_ARG"
+
+    log "1/3 环境预检"
+    if ! bash "$SCRIPT_DIR/preflight.sh" "$PROFILE_NAME_ARG"; then
+      log "预检存在阻断项。修复后重跑；如确认要带着问题继续，用 FORCE=1。"
+      [ "${FORCE:-0}" != "1" ] && exit 1
+      log "FORCE=1，继续。"
+    fi
+
+    log "2/3 采集 §1-§4 §7"
+    out="$(bash "$SCRIPT_DIR/collect_node.sh" "$PROFILE_NAME_ARG" 2>&1 | tee /dev/stderr)"
+    LAST_LOG_DIR="$(printf '%s\n' "$out" | sed -n 's/^Logs saved to: //p' | tail -n 1)"
+
+    if [ -z "${LAST_LOG_DIR:-}" ] || [ ! -d "$LAST_LOG_DIR" ]; then
+      log "未能确定日志目录，检查 logs/。"
+      exit 1
+    fi
+
+    log "3/3 判定"
+    bash "$SCRIPT_DIR/check_node.sh" "$LAST_LOG_DIR" "$PROFILE_NAME_ARG" || true
+    log "长稳烤机（§8）单独执行："
+    log "  sudo bash scripts/run_acceptance.sh soak $LAST_LOG_DIR $PROFILE_NAME_ARG"
+    ;;
+
+  soak)
+    SOAK_TARGET="${2:-}"
+    PROFILE_NAME_ARG="${3:-${PROFILE:-b300_8gpu}}"
+    if [ -z "$SOAK_TARGET" ] || [ ! -d "$SOAK_TARGET" ]; then
+      log "用法: sudo bash scripts/run_acceptance.sh soak <log_dir> [profile]"
+      log "      <log_dir> 用 standard 模式生成的那个目录。"
+      exit 2
+    fi
+    bash "$SCRIPT_DIR/soak_node.sh" "$SOAK_TARGET" "$PROFILE_NAME_ARG"
+    log "重新判定（并入 §8 结果）"
+    bash "$SCRIPT_DIR/check_node.sh" "$SOAK_TARGET" "$PROFILE_NAME_ARG" || true
+    LAST_LOG_DIR="$SOAK_TARGET"
     ;;
 esac
 

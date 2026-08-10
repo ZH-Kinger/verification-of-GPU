@@ -1,0 +1,168 @@
+Memory Device
+	Size: 128 GB
+	Type: DDR5
+	Speed: 6400 MT/s
+	Configured Memory Speed: 6400 MT/s
+	Manufacturer: Samsung
+
+Memory Device
+	Size: 128 GB
+	Type: DDR5
+	Speed: 6400 MT/s
+	Configured Memory Speed: 6400 MT/s
+	Manufacturer: Samsung
+
+Memory Device
+	Size: 128 GB
+	Type: DDR5
+	Speed: 6400 MT/s
+	Configured Memory Speed: 6400 MT/s
+	Manufacturer: Samsung
+
+Memory Device
+	Size: 128 GB
+	Type: DDR5
+	Speed: 6400 MT/s
+	Configured Memory Speed: 6400 MT/s
+	Manufacturer: Samsung
+
+Memory Device
+	Size: 128 GB
+	Type: DDR5
+	Speed: 6400 MT/s
+	Configured Memory Speed: 6400 MT/s
+	Manufacturer: Samsung
+
+Memory Device
+	Size: 128 GB
+	Type: DDR5
+	Speed: 6400 MT/s
+	Configured Memory Speed: 6400 MT/s
+	Manufacturer: Samsung
+
+Memory Device
+	Size: 128 GB
+	Type: DDR5
+	Speed: 6400 MT/s
+	Configured Memory Speed: 6400 MT/s
+	Manufacturer: Samsung
+
+Memory Device
+	Size: 128 GB
+	Type: DDR5
+	Speed: 6400 MT/s
+	Configured Memory Speed: 6400 MT/s
+	Manufacturer: Samsung
+
+Memory Device
+	Size: 128 GB
+	Type: DDR5
+	Speed: 6400 MT/s
+	Configured Memory Speed: 6400 MT/s
+	Manufacturer: Samsung
+
+Memory Device
+	Size: 128 GB
+	Type: DDR5
+	Speed: 6400 MT/s
+	Configured Memory Speed: 6400 MT/s
+	Manufacturer: Samsung
+
+Memory Device
+	Size: 128 GB
+	Type: DDR5
+	Speed: 6400 MT/s
+	Configured Memory Speed: 6400 MT/s
+	Manufacturer: Samsung
+
+Memory Device
+	Size: 128 GB
+	Type: DDR5
+	Speed: 6400 MT/s
+	Configured Memory Speed: 6400 MT/s
+	Manufacturer: Samsung
+
+Memory Device
+	Size: 128 GB
+	Type: DDR5
+	Speed: 6400 MT/s
+	Configured Memory Speed: 6400 MT/s
+	Manufacturer: Samsung
+
+Memory Device
+	Size: 128 GB
+	Type: DDR5
+	Speed: 6400 MT/s
+	Configured Memory Speed: 6400 MT/s
+	Manufacturer: Samsung
+
+Memory Device
+	Size: 128 GB
+	Type: DDR5
+	Speed: 6400 MT/s
+	Configured Memory Speed: 6400 MT/s
+	Manufacturer: Samsung
+
+Memory Device
+	Size: 128 GB
+	Type: DDR5
+	Speed: 6400 MT/s
+	Configured Memory Speed: 6400 MT/s
+	Manufacturer: Samsung
+
+Memory Device
+	Size: 128 GB
+	Type: DDR5
+	Speed: 6400 MT/s
+	Configured Memory Speed: 6400 MT/s
+	Manufacturer: Samsung
+
+Memory Device
+	Size: 128 GB
+	Type: DDR5
+	Speed: 6400 MT/s
+	Configured Memory Speed: 6400 MT/s
+	Manufacturer: Samsung
+
+Memory Device
+	Size: 128 GB
+	Type: DDR5
+	Speed: 6400 MT/s
+	Configured Memory Speed: 6400 MT/s
+	Manufacturer: Samsung
+
+Memory Device
+	Size: 128 GB
+	Type: DDR5
+	Speed: 6400 MT/s
+	Configured Memory Speed: 6400 MT/s
+	Manufacturer: Samsung
+
+Memory Device
+	Size: 128 GB
+	Type: DDR5
+	Speed: 6400 MT/s
+	Configured Memory Speed: 6400 MT/s
+	Manufacturer: Samsung
+
+Memory Device
+	Size: 128 GB
+	Type: DDR5
+	Speed: 6400 MT/s
+	Configured Memory Speed: 6400 MT/s
+	Manufacturer: Samsung
+
+Memory Device
+	Size: 128 GB
+	Type: DDR5
+	Speed: 6400 MT/s
+	Configured Memory Speed: 6400 MT/s
+	Manufacturer: Samsung
+
+Memory Device
+	Size: 128 GB
+	Type: DDR5
+	Speed: 6400 MT/s
+	Configured Memory Speed: 6400 MT/s
+	Manufacturer: Samsung
+

@@ -129,12 +129,66 @@ sudo bash scripts/run_acceptance.sh fieldiag
 
 ---
 
+## C 线：甲方《验收标准》自动判定（阶段二，单机离线压测）
+
+> 需要驱动，所以在 **dcgm mode** 下跑（A 线跑完可直接接着做）。
+> 覆盖《验收标准》§1 §2 §3 §4 §7；§8 长稳烤机单独一步。
+
+### C1. 环境预检（必做，先确认工具和机器对得上）
+
+```bash
+sudo bash scripts/preflight.sh b300_8gpu     # H200 机型用 h200_8gpu
+```
+- [ ] 实测计算能力与 profile 期望一致
+- [ ] 驱动 / CUDA / DCGM 版本满足该机型下限
+- [ ] 记录"缺失工具清单"（决定哪些项会判 SKIP）
+- [STOP] `deviceQuery` 报 `no kernel image available` → 预编译二进制架构与本机
+  GPU 不符，§3/§4/§8 的带宽与压测项全部跑不了。按
+  `docs/cuda_arch_decision.md` 重编后再继续，不要带着这个问题往下走。
+
+### C2. 采集 + 自动判定
+
+```bash
+sudo bash scripts/run_acceptance.sh standard b300_8gpu
+```
+- [ ] 生成 `logs/<时间戳>_<SN>/acceptance_report.txt`（逐项 实测值/阈值/判定）
+- [ ] FAIL 数为 0
+- [ ] SKIP 项逐个确认原因（工具缺失 or 主动跳过），记进结论
+- [STOP] 出现 FAIL → 按判定表的"实测值 vs 阈值"定位，不要只看汇总。
+
+> 默认会跑 §3 的 1 小时 `gpu_burn` 和 `dcgmi diag -r 3`，整轮约 1.5-2 小时。
+> 只想先看静态项：`SKIP_GPU_BURN=1 SKIP_DCGM=1`。
+> 补 Level 4：`RUN_DCGM_R4=1`（很慢）。
+
+### C3. 驱动参数（§7 要求，改完需重启）
+
+```bash
+sudo bash scripts/set_nvidia_modprobe_params.sh b300_8gpu
+```
+- [ ] `NVreg_EnableStreamMemOPs=1` 与 `PeerMappingOverride=1` 均已写入
+- [ ] 重启后 `cat /proc/driver/nvidia/params` 确认生效
+
+### C4. 长稳烤机（§8，18h/24h）
+
+```bash
+sudo bash scripts/run_acceptance.sh soak logs/<时间戳>_<SN> b300_8gpu
+```
+- [ ] 日志目录在持久分区上（十几小时的采样，别落 tmpfs）
+- [ ] 跑完自动重新判定，§8 结果并入同一张表
+- [ ] ECC / XID / NVLink CRC 增量均为 0（或在阈值内）
+- [ ] 温度峰值 ≤ 86°C，单卡波动 ≤ 5°C
+- [STOP] 中途掉卡、XID、不可纠正 ECC → 立即停，保留全部日志
+
+---
+
 ## 3. 结论与归档
 
 - [ ] 打开 `logs/<时间戳>_<SN>/final_result.txt`，逐项填 PASS/FAIL/RETEST/HOLD
+- [ ] 附上 `acceptance_report.txt`（阶段二的逐项判定表）
 - [ ] 对照 `templates/machine_acceptance_checklist.csv` 核对未漏项
 - [ ] 确认日志写在持久分区/ U 盘，断电后仍在
 - [ ] 整机结论：任一张卡不达标 → 整机不 PASS
+- [ ] **有 SKIP 项时不得直接判 PASS**——判定表会给 HOLD，需说明每个 SKIP 的处置
 
 ## 首跑特别关注（这是第一次在真机上验证这只盘）
 
@@ -142,7 +196,12 @@ sudo bash scripts/run_acceptance.sh fieldiag
 [ ] U 盘在该机型 UEFI 下能否启动（Secure Boot 行为）
 [ ] 驱动 610/DKMS 能否在该内核版本编译加载
 [ ] 离线 deb 在该机基础系统上是否还缺包（记录任何缺失，回制盘机补）
-[ ] sm_90/sm_100 预编译二进制能否在真卡直接执行（否则用 rebuild/ 现场重编）
+[ ] 预编译二进制能否在真卡直接执行（deviceQuery 的实测计算能力是多少？
+    如果不是 profile 期望的 10.3，回制盘机按实测值重编，见 cuda_arch_decision.md）
+[ ] DCGM 版本是否真的认识这块卡（diag 有没有真正执行，而不是"没有 Fail"）
 [ ] 整轮日志是否完整落盘、可追溯到 GPU SN
 ```
+
+**首跑最该带回来的一条信息**：`preflight.sh` 打印的实测计算能力和缺失工具清单。
+这两项决定了要不要重编、要补哪些离线包，是后续所有工作的输入。
 把以上任何“与预期不符”的点记下来反馈，用于固化脚本默认值（如 FIELDIAG_ARGS）。

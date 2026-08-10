@@ -1,0 +1,3 @@
+p2pBandwidthLatencyTest: /x/p2p
+bandwidthTest: /x/bw
+deviceQuery: /x/dq

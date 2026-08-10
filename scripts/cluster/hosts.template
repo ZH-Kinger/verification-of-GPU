@@ -1,0 +1,30 @@
+# 多机压测节点清单 —— 复制为 hosts 后按现场填写。
+#
+# 格式（mpirun hostfile 兼容）：
+#   <主机名或IP> slots=<每节点 GPU 数>
+#
+# 要求：
+#   - 第一行是 head 节点（从它发起 mpirun）
+#   - 所有节点已配好 RoCE、驱动版本一致、时间同步
+#   - head 到所有节点（含自己）免密 SSH：bash scripts/cluster/setup_ssh.sh
+#   - 各节点上本项目路径一致，或用 NFS/本地复制保持一致
+#
+# 规模测试会按 CLUSTER_ALLREDUCE_SCALE（profile 里）取前 N 行组成子集，
+# 所以行的顺序就是加入顺序 —— 把最可疑的节点放前面更容易暴露问题。
+
+node01 slots=8
+node02 slots=8
+node03 slots=8
+node04 slots=8
+node05 slots=8
+node06 slots=8
+node07 slots=8
+node08 slots=8
+node09 slots=8
+node10 slots=8
+node11 slots=8
+node12 slots=8
+node13 slots=8
+node14 slots=8
+node15 slots=8
+node16 slots=8

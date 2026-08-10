@@ -1,0 +1,5 @@
+DCBX mode: OS controlled
+Priority trust state: dscp
+PFC configuration:
+	priority    0   1   2   3   4   5   6   7
+	enabled     0   0   0   1   0   0   0   0

@@ -1,0 +1,2 @@
+enp1s0f0np0      UP             a0:88:c2:00:00:01 <BROADCAST,MULTICAST,UP,LOWER_UP>
+enp1s0f1np1      UP             a0:88:c2:00:00:02 <BROADCAST,MULTICAST,UP,LOWER_UP>

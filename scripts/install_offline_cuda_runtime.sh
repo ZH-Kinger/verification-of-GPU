@@ -8,8 +8,12 @@
 #
 # After the driver, this script installs:
 #   - cuda-cudart-12-8        -> libcudart.so.12   (nccl-tests, deviceQuery, p2p)
+#   - libcublas-12-8          -> libcublas.so.12   (gpu_burn; §3 1h 压测 / §8 长稳烤机)
 #   - libnccl2 2.30.7+cuda12.9 -> libnccl.so.2      (nccl-tests)
 # and registers the cudart library path with the dynamic linker.
+#
+# cublas 是《验收标准》引入 gpu_burn 之后新增的依赖 —— 本项目原先刻意不打包
+# CUDA 数学库，这是唯一的例外。
 #
 # Usage:
 #   sudo bash scripts/install_offline_cuda_runtime.sh

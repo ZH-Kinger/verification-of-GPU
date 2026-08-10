@@ -28,8 +28,10 @@ Boot menu (see `boot_configs/`):
 | `INDEX.md` | This file |
 | `START_HERE.txt` | Shortest boot-to-run path |
 | `README.md` / `PROJECT_PLAN.md` / `PROJECT_MEMORY.md` | Overview, plan, state & decisions |
+| `profiles/` | **每机型的全部阈值与版本要求**（`b300_8gpu.env`, `h200_8gpu.env`） |
 | `docs/` | SOP, acceptance criteria, USB design, runbooks, completeness |
 | `scripts/` | Helper + orchestration scripts (see below) |
+| `scripts/cluster/` | 多机压测（RoCE §5 + 跨节点 NCCL §6） |
 | `tools/bin/` | **Precompiled** stress binaries (sm_90 H200 + sm_100 B300/GB300) |
 | `tools/fieldiag/` | **Drop fieldiag here** (only remaining gap — see PLACEHOLDER.txt) |
 | `downloads/nvidia/` | Driver / DCGM / Fabric Manager offline debs (target install) |
@@ -63,13 +65,24 @@ Each run writes a timestamped dir under `logs/` plus a pre-filled `final_result.
 
 | Script | Role |
 |--------|------|
-| `run_acceptance.sh` | One-command orchestrator: `fieldiag` or `dcgm` mode |
-| `offline_gpu_acceptance_collect.sh` | Low-level log/diag collector |
+| `run_acceptance.sh` | One-command orchestrator: `fieldiag` / `standard` / `soak` / `dcgm` |
+| `preflight.sh` | 环境预检：计算能力、驱动/CUDA/DCGM 版本、工具在位情况 |
+| `collect_node.sh` | 单机采集《验收标准》§1 §2 §3 §4 §7 |
+| `soak_node.sh` | §8 长稳烤机（gpu_burn + 持续 NCCL + 采样，判增量） |
+| `check_node.sh` | 单机判定 → `acceptance_report.tsv` / `.txt` |
+| `set_nvidia_modprobe_params.sh` | §7 要求的 NVIDIA 内核模块参数 |
+| `cluster/setup_ssh.sh` | 多机免密 + 驱动版本一致性核对 |
+| `cluster/roce_check.sh` | §5 RoCE v2 检查与打流 |
+| `cluster/nccl_scale.sh` | §6 跨节点 NCCL 2/4/8/16 节点扫描 |
+| `cluster/check_cluster.sh` | 多机判定 → `cluster_report.tsv` / `.txt` |
+| `lib/common.sh` | 共用：profile 加载、阈值断言、报告输出、输出解析 |
+| `offline_gpu_acceptance_collect.sh` | Low-level log/diag collector (v1.0 path) |
 | `mount_gpu_data.sh` | Mount GPU_DATA by label |
 | `init_persistence_partition.sh` | Format the persistence partition (ext4 `writable`) |
 | `set_fieldiag_driver_block.sh` | Persistently blacklist NVIDIA/nouveau |
 | `install_offline_nvidia_tools.sh` | Offline driver / DCGM / Fabric Manager |
-| `install_offline_cuda_runtime.sh` | Offline CUDA runtime + NCCL (to run tools/bin) |
+| `install_offline_cuda_runtime.sh` | Offline CUDA runtime + NCCL + cuBLAS (to run tools/bin) |
+| `install_offline_tools.sh` | ipmitool / ethtool / nvme-cli / openmpi（标准新增要求） |
 | `build_official_stress_tools.sh` | Recompile tools from source (fallback) |
 | `prepare_single_usb_minimal.ps1`, `verify_downloads.ps1` | Windows build-host scripts |
 

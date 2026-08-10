@@ -1,6 +1,87 @@
 # Project Memory
 
-Last updated: 2026-06-15
+Last updated: 2026-08-10
+
+## v3.0 — 对接甲方《验收标准》（2026-08-10）
+
+甲方给出一份逐条数值化的《验收标准》（8 章，约 50 项，第 23-29 页），
+针对 **Blackwell Ultra 8 卡节点**（2×NVSwitch4、每卡 18×NVLink5、288GB HBM3e、
+1100W、PCIe Gen6 x16、8×ConnectX-8）。与项目原有 H200 散文式标准差异很大，
+本轮改造把项目从"采集 + 人工判"改成"采集 + 自动判"，并拆成两条链路。
+
+已决定（用户确认）：
+
+```text
+1. 两条链路：单机离线压测（§1-4,7,8）+ 多机压测（§5,6）。
+   多机两种现场都要支持：节点已装好 OS，或裸机。
+2. fieldiag 保持阶段一主标准，新标准作为阶段二。grub 默认项不变。
+3. CUDA：先做脚本和判定，加环境预检确认实际计算能力后再重编。
+```
+
+新增结构：
+
+```text
+profiles/b300_8gpu.env, h200_8gpu.env   每机型的全部阈值 + 驱动/CUDA/NCCL/DCGM
+                                        版本要求 + 使用哪套 tools 二进制
+scripts/lib/common.sh                   profile 加载、阈值断言、报告、输出解析
+scripts/preflight.sh                    计算能力 / 版本 / 工具在位预检
+scripts/collect_node.sh                 §1 §2 §3 §4 §7 采集
+scripts/soak_node.sh                    §8 长稳烤机（增量口径）
+scripts/check_node.sh                   单机判定 → acceptance_report.tsv/.txt
+scripts/set_nvidia_modprobe_params.sh   §7 驱动参数
+scripts/cluster/                        §5 §6 多机链路
+docs/acceptance_criteria_b300.md        标准 → 脚本 → 判定 映射表
+docs/tooling_gaps.md                    缺失工具与离线获取方法
+docs/cuda_arch_decision.md              CUDA 13 / sm_103 决策记录
+docs/cluster_runbook.md                 多机 runbook
+```
+
+判定口径（写死在 check_node.sh 里，改动前先想清楚）：
+
+```text
+可纠正 ECC 按 GPU index 配对求增量取最大值，不求和（标准是"单卡"口径）
+PCIe 判 link.gen.max 不判 current（空闲会降到 Gen1，判 current 会全线误 FAIL）
+带宽矩阵取非对角最小值（标准说"任意 GPU 对"）
+NCCL 取峰值 Bus BW，均值记备注
+温度/波动用 samples.csv 而非 dmon.txt（dmon 列布局随驱动版本变）
+nvidia-smi 返回 [N/A] 一律判 SKIP，绝不当成 0
+  —— "没有数据"和"计数为 0"是两回事，后者会给出假 PASS
+SKIP 不等于 PASS：有 SKIP 无 FAIL 判 HOLD
+```
+
+测试中实测发现、已修复的坑（都不是 bash -n 能看出来的）：
+
+```text
+ipmitool sensor list 的状态在第 4 列（第 3 列是单位）
+grep -c 带多个文件会每文件输出一行计数，-h 也不抑制 -> 先 cat 成单流
+num_min/num_max 按值输出 "1" 或 "1.00"，不能拿它的输出做字符串比对
+GNU timeout 默认把子进程放进自己新建的进程组，按作业进程组回收够不着它
+  -> soak 的 dmon 必须用 timeout --foreground，否则中断后采样器一直活着
+```
+
+工具缺口 —— 已接进 bootstrap + build（联网工作主机上一条命令补齐）：
+
+```text
+gpu_burn + compare.ptx        gpu-burn-master.zip -> tools/<subdir>/
+bandwidthTest                 cuda-samples-v12.3.zip（新版 master 已删除它）
+*_perf_mpi                    nccl-tests MPI=1，独立编译目录 + _mpi 后缀
+ipmitool/ethtool/nvme-cli/openmpi   downloads/offline_deb_noble/tools/
+                              目标机: scripts/install_offline_tools.sh
+```
+
+新引入的依赖（重要）：**gpu-burn 链接 cublas**，所以 runtime/ 新增
+`libcublas-12-8`。这是本项目原先"不打包 CUDA 数学库"决定的唯一例外。
+另外 gpu_burn 运行时需要同目录的 `compare.ptx`，两个文件必须一起拷。
+
+仍待办（见 docs/tooling_gaps.md）：
+
+```text
+DCGM 升到 4.x（3.3.9 不支持 Blackwell，diag 会"没测也没 Fail"）
+gdrcopy_sanity（需编内核模块，live 系统上不一定装得起来）
+MFT / mlnx_qos / perftest（§5；多数现场节点自带 DOCA-OFED，不必本项目携带）
+*_perf_mpi 的多节点分发（编译已自动化，但 mpirun 不会替你分发到各节点）
+CUDA 13 + sm_103 重编（待 preflight 在真机确认计算能力后启动）
+```
 
 ## Project Goal
 
