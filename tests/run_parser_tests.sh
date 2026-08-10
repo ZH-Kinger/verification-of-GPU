@@ -55,6 +55,7 @@ expect_in() {  # <输出> <行关键字> <期望判定>
 }
 
 # 每一条都对应一处容易出错的解析
+expect_in "$out" "采集权限"        PASS   # root 采集，证据完整
 expect_in "$out" "GPU 数量"        PASS   # nvidia-smi -L 计数
 expect_in "$out" "系统内存"        PASS   # free -b -> GiB
 expect_in "$out" "风扇状态"        PASS
@@ -147,6 +148,9 @@ m_mem_mixed()  { sed -i '0~6s/Size: 128 GB/Size: 96 GB/' "$1/dmidecode_memory_fu
 m_mem_stress() { printf 'Stats: Found 3 hardware incidents\nStatus: PASS\n' > "$1/mem_stress.txt"; }
 # 压测出现 miscompare（Status 仍打 PASS 也不能放过）
 m_mem_miscmp() { printf 'Hardware Error: miscompare on CPU 3\nStats: Found 0 hardware incidents\nStatus: PASS\n' > "$1/mem_stress.txt"; }
+# 忘了 sudo：一堆项静默变 SKIP，判定表必须把"证据不完整"本身标成 FAIL，
+# 而不是让人从散落的 SKIP 里自己推断。
+m_nonroot()    { echo "collected as non-root (uid=1000)" > "$1/WARNING_NOT_ROOT.txt"; }
 
 mutate_expect "GPU 少一张"          "GPU 数量"        m_gpu_count
 mutate_expect "出现不可纠正 ECC"    "不可纠正错误"    m_ecc_unc
@@ -178,6 +182,7 @@ mutate_expect "少一条 128G 内存条"  "内存识别率"      m_mem_undetecte
 mutate_expect "内存条混插 96/128G"  "内存条一致性"    m_mem_mixed
 mutate_expect "内存压测报硬件错误"  "内存压力测试"    m_mem_stress
 mutate_expect "内存压测出现 miscompare" "内存压力测试" m_mem_miscmp
+mutate_expect "非 root 采集"        "采集权限"        m_nonroot
 
 # 特殊一类：驱动返回 N/A。这不是"合格"也不是"不合格"，是"没有数据"，
 # 必须判 SKIP —— 早期实现会把 "[N/A]" 当成 0，直接给出假 PASS。
@@ -237,6 +242,30 @@ if printf '%s' "$outr" | grep -q '机器判定'; then
   ok "不带 profile 参数时回落到日志目录记录的 profile.env"
 else
   bad "不带 profile 参数时无法完成判定"
+fi
+
+# 阈值缺失必须判 SKIP，绝不能判 PASS。
+# 这是整套系统最危险的一类失效：变量名拼错或 profile 少一行时，awk 把空串当 0，
+# 于是"实测 >= 0"恒成立，检查项静默退化成橡皮图章 —— 比崩溃糟，因为崩溃看得见。
+STRIP="$WORKROOT/stripped"
+mkdir -p "$STRIP"
+cp "$TEST_DIR/fixtures/node_b300_pass/"* "$STRIP/"
+grep -vE '^(SYS_MEM_MIN_TB|SYS_MEM_DETECT_MIN_PCT|NVB_D2D_READ_MIN_GBS|P2P_LAT_MAX_US)=' \
+  "$BASE_DIR/profiles/b300_8gpu.env" > "$STRIP/profile.env"
+outs="$(bash "$BASE_DIR/scripts/check_node.sh" "$STRIP" 2>&1)"
+for item in "系统内存" "内存识别率" "GPU 间带宽" "GPU 间 P2P 延迟"; do
+  line="$(printf '%s\n' "$outs" | grep -F "$item" | head -n1)"
+  if printf '%s' "$line" | grep -q '\[SKIP'; then
+    ok "阈值缺失时「$item」判 SKIP"
+  else
+    bad "阈值缺失时「$item」未判 SKIP，实得: $(printf '%s' "$line" | tr -s ' ')"
+  fi
+done
+# 旧快照缺变量时不能崩（set -u 下会中途死掉，只留半张表）
+if printf '%s' "$outs" | grep -q '机器判定' && printf '%s' "$outs" | grep -q '缺少以下变量'; then
+  ok "旧 profile 快照：不崩溃，且明确提示缺失变量"
+else
+  bad "旧 profile 快照处理有问题（崩溃或未提示）"
 fi
 
 # ==================================================== 4. profile 切换

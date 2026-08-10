@@ -34,6 +34,11 @@
 # profile: b300_8gpu（默认）或 h200_8gpu。不同机型的显存/功耗/带宽阈值和
 #          驱动/CUDA/NCCL/DCGM 版本要求都不同，全部由 profile 决定。
 #
+# 退出码（批量验收时按它判断这台机器过没过）：
+#   0  判定 PASS
+#   1  判定 FAIL 或 HOLD（存在 SKIP 项），或预检阻断
+#   2  用法错误
+#
 # Both modes write a timestamped log directory under logs/ and drop a
 # pre-filled final_result.txt skeleton into that directory.
 #
@@ -66,6 +71,10 @@ case "$MODE" in
 esac
 
 log() { echo "[run_acceptance] $*"; }
+
+# 判定结果要传出去。批量验收时脚本的退出码就是"这台机器过没过"，
+# 用 || true 吞掉会让 FAIL 的机器在流水线里被当成通过。
+VERDICT_RC=0
 
 if [ "$(id -u)" -ne 0 ]; then
   log "WARNING: not running as root. fieldiag, DCGM, dmidecode and dmesg need root."
@@ -145,7 +154,7 @@ case "$MODE" in
     fi
 
     log "3/3 判定"
-    bash "$SCRIPT_DIR/check_node.sh" "$LAST_LOG_DIR" "$PROFILE_NAME_ARG" || true
+    bash "$SCRIPT_DIR/check_node.sh" "$LAST_LOG_DIR" "$PROFILE_NAME_ARG" || VERDICT_RC=$?
     log "长稳烤机（§8）单独执行："
     log "  sudo bash scripts/run_acceptance.sh soak $LAST_LOG_DIR $PROFILE_NAME_ARG"
     ;;
@@ -160,7 +169,7 @@ case "$MODE" in
     fi
     bash "$SCRIPT_DIR/soak_node.sh" "$SOAK_TARGET" "$PROFILE_NAME_ARG"
     log "重新判定（并入 §8 结果）"
-    bash "$SCRIPT_DIR/check_node.sh" "$SOAK_TARGET" "$PROFILE_NAME_ARG" || true
+    bash "$SCRIPT_DIR/check_node.sh" "$SOAK_TARGET" "$PROFILE_NAME_ARG" || VERDICT_RC=$?
     LAST_LOG_DIR="$SOAK_TARGET"
     ;;
 esac
@@ -183,3 +192,8 @@ else
 fi
 
 log "Done (mode: $MODE)."
+# 退出码即整机判定：0=PASS，1=FAIL 或 HOLD（含 SKIP），2=用法错误。
+if [ "$VERDICT_RC" -ne 0 ]; then
+  log "判定未通过（退出码 $VERDICT_RC）—— 详见判定表。"
+fi
+exit "$VERDICT_RC"

@@ -31,6 +31,42 @@ load_profile() {
   . "$file"
   ACC_PROFILE="$name"
   export ACC_PROFILE
+  apply_profile_defaults
+}
+
+# 声明脚本用到的每一个 profile 变量，缺失的置空。
+#
+# 为什么必须有这个：日志目录里存的是采集当时的 profile.env 快照，用今天的脚本
+# 复核一份半年前的日志时，快照里不会有后来新增的变量。在 set -u 下那会让判定
+# 脚本中途死掉，只留下一份看起来正常、实际残缺的判定表。
+#
+# 置空而不是给默认值：阈值缺失时对应项必须判 SKIP（看得见），
+# 绝不能悄悄套用一个默认值把检查变成橡皮图章。
+apply_profile_defaults() {
+  local v
+  for v in \
+    PROFILE_NAME PROFILE_ARCH_NOTE TOOLS_BIN_SUBDIR \
+    EXPECTED_GPU_COUNT EXPECTED_GPU_MODEL_PATTERN EXPECTED_COMPUTE_CAP CUDA_ARCH_LIST \
+    SYS_MEM_MIN_TB SYS_MEM_DETECT_MIN_PCT SYS_MEM_STRESS_SECONDS SYS_MEM_STRESS_PCT \
+    GPU_TEMP_MAX_C GPU_TEMP_FLUCT_MAX_C \
+    GPU_MEM_MIN_MIB GPU_MEM_NOMINAL_GB NODE_GPU_MEM_MIN_GIB \
+    ECC_MODE_EXPECTED ECC_UNCORRECTED_MAX ECC_CORRECTED_MAX \
+    GPU_POWER_LIMIT_W GPU_POWER_LIMIT_TOL_W PCIE_GEN PCIE_WIDTH \
+    NVB_H2D_MIN_GBS NVB_D2H_MIN_GBS NVB_D2D_READ_MIN_GBS GPU_BURN_SHORT_SECONDS \
+    NVLINK_TOPO_TAG NVLINK_LINKS_PER_GPU NVLINK_ERR_MAX \
+    P2P_BW_MIN_GBS P2P_LAT_MAX_US NCCL_ALLREDUCE_MIN_GBS NCCL_ALLGATHER_MIN_GBS \
+    NCCL_BENCH_ARGS \
+    ROCE_LINK_TYPE ROCE_MTU ROCE_TRUST_MODE ROCE_WRITE_BW_MIN_GBPS ROCE_READ_BW_MIN_GBPS \
+    ROCE_GDR_BW_MIN_GBPS ROCE_LAT_MAX_US ROCE_PFC_PAUSE_MAX_PCT ROCE_RX_DISCARDS_MAX \
+    ROCE_ONLY_ALLREDUCE_MIN_GBS ROCE_PERFTEST_ARGS \
+    CLUSTER_ALLREDUCE_SCALE CLUSTER_ALLGATHER_2N_MIN_GBS CLUSTER_REDUCESCATTER_2N_MIN_GBS \
+    CLUSTER_ALLTOALL_2N_MIN_GBS CLUSTER_SENDRECV_2N_MIN_GBS CLUSTER_BENCH_ARGS \
+    DRIVER_MIN_VERSION CUDA_MIN_VERSION NCCL_MIN_VERSION DCGM_MIN_VERSION \
+    REQUIRE_NVIDIA_PEERMEM REQUIRE_GDRCOPY NVIDIA_MODPROBE_REQUIRED \
+    SOAK_SECONDS SOAK_SAMPLE_INTERVAL_S SOAK_XID_MAX SOAK_NVLINK_CRC_DELTA_MAX
+  do
+    eval ": \"\${$v:=}\""
+  done
 }
 
 # Precompiled binaries for the loaded profile, with a fallback to tools/bin so
@@ -232,6 +268,13 @@ report_row() {
 # report_ge <section> <module> <item> <measured> <min> [unit] [note]
 report_ge() {
   local section="$1" module="$2" item="$3" measured="$4" min="$5" unit="${6:-}" note="${7:-}"
+  # 阈值本身缺失/非数值时必须判 SKIP。绝不能往下走 —— awk 会把空串当 0，
+  # 于是任何实测值都 >= 0，一个拼错的变量名就把检查项变成橡皮图章。
+  if ! is_num "$min"; then
+    report_row "$section" "$module" "$item" "${measured:-N/A}" "阈值未定义" SKIP \
+      "profile 未定义该阈值（变量缺失或拼写错误），不能据此判 PASS"
+    return
+  fi
   if ! is_num "$measured"; then
     report_row "$section" "$module" "$item" "${measured:-N/A}" ">= $min $unit" SKIP \
       "${note:-未取得实测值（工具缺失或输出无法解析）}"
@@ -248,6 +291,11 @@ report_ge() {
 # report_le <section> <module> <item> <measured> <max> [unit] [note]
 report_le() {
   local section="$1" module="$2" item="$3" measured="$4" max="$5" unit="${6:-}" note="${7:-}"
+  if ! is_num "$max"; then
+    report_row "$section" "$module" "$item" "${measured:-N/A}" "阈值未定义" SKIP \
+      "profile 未定义该阈值（变量缺失或拼写错误），不能据此判 PASS"
+    return
+  fi
   if ! is_num "$measured"; then
     report_row "$section" "$module" "$item" "${measured:-N/A}" "<= $max $unit" SKIP \
       "${note:-未取得实测值（工具缺失或输出无法解析）}"
@@ -264,6 +312,11 @@ report_le() {
 # report_eq <section> <module> <item> <measured> <expected> [note]  (string equality)
 report_eq() {
   local section="$1" module="$2" item="$3" measured="$4" expected="$5" note="${6:-}"
+  if [ -z "$expected" ]; then
+    report_row "$section" "$module" "$item" "${measured:-N/A}" "期望值未定义" SKIP \
+      "profile 未定义该期望值（变量缺失或拼写错误），不能据此判 PASS"
+    return
+  fi
   if [ -z "$measured" ]; then
     report_row "$section" "$module" "$item" "N/A" "$expected" SKIP "${note:-未取得实测值}"
   elif [ "$measured" = "$expected" ]; then

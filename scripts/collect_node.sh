@@ -24,8 +24,32 @@ load_profile "$PROFILE_ARG" || exit 2
 
 LOG_ROOT="${LOG_ROOT:-$BASE_DIR/logs}"
 ts="$(date +%F_%H%M%S)"
-host_sn="$(dmidecode -s system-serial-number 2>/dev/null | tr -dc 'A-Za-z0-9._-' | head -c 64)"
-[ -z "$host_sn" ] && host_sn="$(hostname 2>/dev/null || echo UNKNOWN_HOST)"
+
+# 机器标识：日志目录名必须能指认是哪一台，否则批量验收时几十份日志分不开。
+# 不能只回落到 hostname —— live USB 上每台机器的 hostname 都一样（ubuntu），
+# 一批机器会产出一堆同名目录。按可靠性依次尝试。
+machine_id() {
+  local id
+  id="$(dmidecode -s system-serial-number 2>/dev/null | tr -dc 'A-Za-z0-9._-' | head -c 64)"
+  case "$id" in ""|*[Tt]o[Bb]e*|*[Nn]ot[Ss]pecified*|0|000*) id="" ;; esac
+  [ -n "$id" ] && { echo "$id"; return; }
+
+  # 主板 SN（部分机型整机 SN 为空但主板有）
+  id="$(dmidecode -s baseboard-serial-number 2>/dev/null | tr -dc 'A-Za-z0-9._-' | head -c 64)"
+  case "$id" in ""|*[Tt]o[Bb]e*|*[Nn]ot[Ss]pecified*|0|000*) id="" ;; esac
+  [ -n "$id" ] && { echo "BB-$id"; return; }
+
+  # GPU0 序列号：dcgm 模式下一定有，且天然唯一
+  id="$(nvidia-smi --query-gpu=serial --format=csv,noheader 2>/dev/null | head -n1 | tr -dc 'A-Za-z0-9')"
+  [ -n "$id" ] && [ "$id" != "0" ] && { echo "GPU-$id"; return; }
+
+  # 第一块物理网卡 MAC
+  id="$(cat /sys/class/net/*/address 2>/dev/null | grep -v '^00:00:00' | head -n1 | tr -d ':')"
+  [ -n "$id" ] && { echo "MAC-$id"; return; }
+
+  echo "${HOSTNAME:-UNKNOWN_HOST}"
+}
+host_sn="$(machine_id)"
 
 LOG_DIR="${LOG_DIR:-$LOG_ROOT/${ts}_${host_sn}}"
 mkdir -p "$LOG_DIR"
@@ -50,6 +74,21 @@ have() { command -v "$1" >/dev/null 2>&1; }
 bin_or_path() { tool_path "$1" 2>/dev/null; }
 
 log "profile=$ACC_PROFILE  log_dir=$LOG_DIR"
+
+# 非 root 会静默降级一大片：dmidecode（内存库存/识别率、机器 SN）、
+# nvidia-smi -pm（持久模式）、dmesg（XID 扫描）、ipmitool（风扇）全部拿不到，
+# 判定表看起来照常出，只是多了一堆 SKIP —— 现场很容易没注意就签了字。
+if [ "$(id -u)" -ne 0 ]; then
+  log "======================================================================"
+  log "警告：当前不是 root。以下项将无法采集，判定时会记 SKIP："
+  log "  §1 内存识别率/内存条一致性、风扇状态   （dmidecode / ipmitool 需要 root）"
+  log "  §2 内存规格、机器 SN                   （日志目录名会退化为网卡 MAC 或主机名）"
+  log "  §3 持久模式设置、内核日志 XID 扫描"
+  log "正确用法：sudo bash scripts/collect_node.sh $ACC_PROFILE"
+  log "======================================================================"
+  echo "collected as non-root (uid=$(id -u)); many items degraded to SKIP" \
+    > "$LOG_DIR/WARNING_NOT_ROOT.txt"
+fi
 
 # ============================================================ §1 物理与环境
 section_1_physical() {

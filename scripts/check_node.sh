@@ -33,6 +33,17 @@ if [ -z "$PROFILE_ARG" ] && [ -f "$LOG_DIR/profile.env" ]; then
   . "$LOG_DIR/profile.env"
   ACC_PROFILE="$(grep -oE '^Profile: [a-z0-9_]+' "$LOG_DIR/session.txt" 2>/dev/null | awk '{print $2}')"
   ACC_PROFILE="${ACC_PROFILE:-recorded}"
+  # 快照是采集当时的版本，可能缺后来新增的变量。补齐声明，否则 set -u
+  # 会让判定中途死掉、只留下一份看着正常实际残缺的表。
+  apply_profile_defaults
+  MISSING_KEYS="$(comm -23 \
+      <(grep -oE '^[A-Z][A-Z0-9_]+=' "$BASE_DIR/profiles/b300_8gpu.env" | tr -d '=' | sort -u) \
+      <(grep -oE '^[A-Z][A-Z0-9_]+=' "$LOG_DIR/profile.env" | tr -d '=' | sort -u) | tr '\n' ' ')"
+  if [ -n "${MISSING_KEYS// /}" ]; then
+    echo "[check] 注意：日志里记录的 profile 快照缺少以下变量，相关项将判 SKIP：" >&2
+    echo "[check]   $MISSING_KEYS" >&2
+    echo "[check] 想按当前标准复核请显式指定：bash scripts/check_node.sh $LOG_DIR b300_8gpu" >&2
+  fi
 else
   load_profile "${PROFILE_ARG:-${PROFILE:-b300_8gpu}}" || exit 2
 fi
@@ -169,21 +180,25 @@ is_num "$mem_bytes" && mem_gib="$(awk -v b="$mem_bytes" 'BEGIN{printf "%.0f", b/
 
 # 1) 容量：只对照标准给的下限（十进制 TB → GiB），实际有多少就报多少
 if is_num "$mem_gib"; then
-  min_gib="$(awk -v t="${SYS_MEM_MIN_TB:-0}" 'BEGIN{printf "%.0f", t*1000000000000/1073741824}')"
+  # 不能用 ${SYS_MEM_MIN_TB:-0} 兜底：0 是合法数字，会绕过 report_ge 的阈值守卫，
+  # 变成 "要求 >= 0 GiB" 的假 PASS。阈值缺失就传空，让它判 SKIP。
+  min_gib=""
+  is_num "$SYS_MEM_MIN_TB" && \
+    min_gib="$(awk -v t="$SYS_MEM_MIN_TB" 'BEGIN{printf "%.0f", t*1000000000000/1073741824}')"
   report_ge 1 "节点物理" "系统内存(DDR5)" "$mem_gib" "$min_gib" "GiB" \
-    "实测 ${mem_gib} GiB$( [ -n "$dmi_installed_gib" ] && echo "；dmidecode 已装 ${dmi_installed_gib} GiB / ${dmi_populated} 条（共 ${dmi_slots} 槽）" )；标准 ≥${SYS_MEM_MIN_TB}TB"
+    "实测 ${mem_gib} GiB$( [ -n "$dmi_installed_gib" ] && echo "；dmidecode 已装 ${dmi_installed_gib} GiB / ${dmi_populated} 条（共 ${dmi_slots} 槽）" )；标准 ≥${SYS_MEM_MIN_TB:-?}TB"
 else
-  report_row 1 "节点物理" "系统内存(DDR5)" "N/A" ">= ${SYS_MEM_MIN_TB} TB" SKIP "未采集 free -b"
+  report_row 1 "节点物理" "系统内存(DDR5)" "N/A" ">= ${SYS_MEM_MIN_TB:-?} TB" SKIP "未采集 free -b"
 fi
 
 # 2) 识别率：free 认到的 / dmidecode 已装的。这一项才是抓"掉内存"的，
 #    不依赖任何写死的容量 —— 换配置也照样有效。
 if is_num "$mem_gib" && is_num "$dmi_installed_gib" && [ "${dmi_installed_gib:-0}" -gt 0 ]; then
   detect_pct="$(awk -v a="$mem_gib" -v b="$dmi_installed_gib" 'BEGIN{printf "%.1f", a/b*100}')"
-  report_ge 1 "节点物理" "内存识别率" "$detect_pct" "${SYS_MEM_DETECT_MIN_PCT:-97}" "%" \
+  report_ge 1 "节点物理" "内存识别率" "$detect_pct" "$SYS_MEM_DETECT_MIN_PCT" "%" \
     "free 认到 ${mem_gib} GiB / dmidecode 已装 ${dmi_installed_gib} GiB；低于阈值说明有内存条未被识别或已被 BIOS 屏蔽"
 else
-  report_row 1 "节点物理" "内存识别率" "N/A" ">= ${SYS_MEM_DETECT_MIN_PCT:-97} %" SKIP \
+  report_row 1 "节点物理" "内存识别率" "N/A" ">= ${SYS_MEM_DETECT_MIN_PCT:-?} %" SKIP \
     "需要 dmidecode（root）才能拿到已装容量"
 fi
 
@@ -643,6 +658,16 @@ if [ -d "$SOAK" ]; then
 else
   report_row 8 "长稳烤机" "GPU 满载稳定性" "未执行" "零掉卡/ECC/XID/NVLink CRC 增量" SKIP \
     "执行 scripts/soak_node.sh 后重跑本脚本"
+fi
+
+# ==================================================== 采集条件本身是否可信
+# 非 root 采集会让一堆项静默变成 SKIP。这一行把"证据不完整"本身摆到表里，
+# 而不是让人从一堆 SKIP 里自己推断。
+if [ -f "$LOG_DIR/WARNING_NOT_ROOT.txt" ]; then
+  report_row 0 "采集条件" "采集权限" "非 root（uid 见 WARNING_NOT_ROOT.txt）" "root" FAIL \
+    "dmidecode/ipmitool/dmesg/持久模式均未采到，本次结果不足以作为验收依据，请 sudo 重采"
+else
+  report_row 0 "采集条件" "采集权限" "root" "root" PASS
 fi
 
 # ============================================================ 硬性 FAIL 扫描
