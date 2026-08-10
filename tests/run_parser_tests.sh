@@ -314,6 +314,53 @@ with open('$NODE/acceptance_report.csv',encoding='utf-8-sig') as f:
 else
   bad "未生成交付用 CSV"
 fi
+# 交付用 HTML：离线环境必须自包含，且命令列里的尖括号必须转义
+if [ -s "$NODE/acceptance_report.html" ]; then
+  if grep -qE 'https?://|src=|@import' "$NODE/acceptance_report.html"; then
+    bad "HTML 引用了外部资源（离线环境打不开）"
+  else
+    ok "HTML 自包含（无 CDN/外链，离线可打开）"
+  fi
+  # 命令列字面含 "<0-7>" "<peer_ip>"，不转义会被浏览器当标签吞掉
+  if grep -q '&lt;0-7&gt;' "$NODE/acceptance_report.html" \
+     && ! grep -q 'i <0-7>' "$NODE/acceptance_report.html"; then
+    ok "命令列的尖括号已转义（<0-7> 不会被浏览器吞掉）"
+  else
+    bad "HTML 未转义命令列中的尖括号"
+  fi
+  if command -v python3 >/dev/null 2>&1; then
+    if python3 - "$NODE/acceptance_report.html" <<'PYEOF'
+from html.parser import HTMLParser
+import sys
+class P(HTMLParser):
+    def __init__(s):
+        super().__init__(); s.stack=[]; s.bad=[]
+        s.void={'meta','br','hr','img','input','link'}
+    def handle_starttag(s,t,a):
+        if t not in s.void: s.stack.append(t)
+    def handle_endtag(s,t):
+        if s.stack and s.stack[-1]==t: s.stack.pop()
+        else: s.bad.append(t)
+p=P(); p.feed(open(sys.argv[1],encoding='utf-8').read())
+sys.exit(1 if (p.stack or p.bad) else 0)
+PYEOF
+    then ok "HTML 标签闭合正确"; else bad "HTML 结构有未闭合标签"; fi
+  fi
+else
+  bad "未生成交付用 HTML"
+fi
+# FAIL 场景：横幅与标红行必须出现
+HF="$WORKROOT/htmlfail"
+mkdir -p "$HF"; cp -r "$TEST_DIR/fixtures/node_b300_pass/"* "$HF/"
+sed -i '1s/, 0/, 3/' "$HF/q_ecc_uncorrected.txt"
+bash "$BASE_DIR/scripts/check_node.sh" "$HF" b300_8gpu >/dev/null 2>&1
+if grep -q 'banner fail' "$HF/acceptance_report.html" \
+   && grep -q '<tr class="fail">' "$HF/acceptance_report.html"; then
+  ok "HTML 在 FAIL 时显示红色横幅并标红对应行"
+else
+  bad "HTML 未正确呈现 FAIL 状态"
+fi
+
 # fmt_table 与 column -t 输出应当一致（等价性），且不依赖 bsdextrautils
 if command -v column >/dev/null 2>&1; then
   # 行尾空白不比较：column 保留末列 padding，fmt_table 去掉，两者都无碍阅读

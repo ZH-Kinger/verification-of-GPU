@@ -401,6 +401,148 @@ fmt_table() {
     }' "$@"
 }
 
+# TSV -> 交付用 HTML 判定表（自包含，无任何外部资源）。
+#
+#   write_html_report <判定表.tsv> <输出.html> <标题> <元信息文件> [每卡明细.tsv]
+#
+# 两条硬约束：
+#   1. 离线环境不能有 CDN / 外链字体 / 外部 CSS，全部内联。
+#   2. 命令列里字面含有 "<0-7>"、"<peer_ip>"、"&&"，不转义会被浏览器当标签吞掉 ——
+#      交付给甲方的表格上会凭空少掉半条命令。
+write_html_report() {
+  local tsv="$1" out="$2" title="$3" metafile="$4" pergpu="${5:-}"
+  awk -F'\t' -v title="$title" -v metafile="$metafile" -v pergpu="$pergpu" '
+    function esc(s) {
+      gsub(/&/, "\\&amp;", s); gsub(/</, "\\&lt;", s); gsub(/>/, "\\&gt;", s);
+      gsub(/"/, "\\&quot;", s); return s;
+    }
+    function cls(v) {
+      if (v == "PASS")   return "pass";
+      if (v == "FAIL")   return "fail";
+      if (v == "SKIP")   return "skip";
+      return "manual";
+    }
+    BEGIN {
+      print "<!doctype html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\">";
+      print "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">";
+      print "<title>" esc(title) "</title><style>";
+      print ":root{--pass:#137333;--fail:#c5221f;--skip:#b06000;--manual:#5f6368;--line:#dadce0;--bg:#fff;--fg:#202124;--muted:#5f6368;--head:#f1f3f4}";
+      print "*{box-sizing:border-box}";
+      print "body{margin:0;padding:24px;background:var(--bg);color:var(--fg);font:14px/1.6 -apple-system,\"Noto Sans CJK SC\",\"Source Han Sans SC\",\"Microsoft YaHei\",sans-serif}";
+      print ".wrap{max-width:1400px;margin:0 auto}";
+      print "h1{font-size:22px;margin:0 0 4px}";
+      print "h2{font-size:16px;margin:32px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--line)}";
+      print ".meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:4px 24px;margin:16px 0;color:var(--muted);font-size:13px}";
+      print ".meta b{color:var(--fg);font-weight:600}";
+      print ".banner{margin:20px 0;padding:16px 20px;border-radius:8px;border-left:6px solid;font-size:18px;font-weight:700}";
+      print ".banner.pass{background:#e6f4ea;border-color:var(--pass);color:var(--pass)}";
+      print ".banner.fail{background:#fce8e6;border-color:var(--fail);color:var(--fail)}";
+      print ".banner.hold{background:#fef7e0;border-color:var(--skip);color:var(--skip)}";
+      print ".banner small{display:block;font-size:13px;font-weight:400;margin-top:4px;color:var(--fg)}";
+      print ".chips{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0 4px}";
+      print ".chip{padding:4px 12px;border-radius:999px;font-size:13px;font-weight:600;border:1px solid}";
+      print ".chip.pass{color:var(--pass);border-color:var(--pass);background:#e6f4ea}";
+      print ".chip.fail{color:var(--fail);border-color:var(--fail);background:#fce8e6}";
+      print ".chip.skip{color:var(--skip);border-color:var(--skip);background:#fef7e0}";
+      print ".chip.manual{color:var(--manual);border-color:var(--manual);background:#f1f3f4}";
+      print "table{border-collapse:collapse;width:100%;font-size:13px;table-layout:auto}";
+      print "th,td{border:1px solid var(--line);padding:7px 9px;text-align:left;vertical-align:top}";
+      print "th{background:var(--head);font-weight:600;white-space:nowrap}";
+      print "tr.sec td{background:#f8f9fa;font-weight:700;border-top:2px solid var(--line)}";
+      print "td.cmd{font-family:ui-monospace,\"DejaVu Sans Mono\",Consolas,monospace;font-size:12px;color:#3c4043;word-break:break-all}";
+      print "td.val{font-weight:600;white-space:nowrap}";
+      print "td.mgn{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}";
+      print "td.note{color:var(--muted);font-size:12px}";
+      print ".v{display:inline-block;min-width:60px;text-align:center;padding:2px 8px;border-radius:4px;font-weight:700;font-size:12px;color:#fff}";
+      print ".v.pass{background:var(--pass)}.v.fail{background:var(--fail)}.v.skip{background:var(--skip)}.v.manual{background:var(--manual)}";
+      print "tr.fail td{background:#fef3f2}";
+      print ".sign{margin-top:40px;display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:28px}";
+      print ".sign div{border-top:1px solid var(--fg);padding-top:6px;font-size:13px;color:var(--muted)}";
+      print "footer{margin-top:32px;padding-top:12px;border-top:1px solid var(--line);color:var(--muted);font-size:12px}";
+      print "@media print{body{padding:0;font-size:11px}h2{page-break-after:avoid}tr{page-break-inside:avoid}.banner{border:2px solid}}";
+      print "</style></head><body><div class=\"wrap\">";
+      print "<h1>" esc(title) "</h1>";
+      # 元信息（key: value 的纯文本文件）
+      if (metafile != "") {
+        print "<div class=\"meta\">";
+        while ((getline line < metafile) > 0) {
+          p = index(line, ":");
+          if (p > 0) printf "<div><b>%s</b> %s</div>\n", esc(substr(line,1,p-1)), esc(substr(line,p+1));
+        }
+        close(metafile);
+        print "</div>";
+      }
+      n_pass=0; n_fail=0; n_skip=0; n_manual=0; nrow=0;
+    }
+    NR == 1 { for (i=1;i<=NF;i++) hdr[i]=$i; ncol=NF; next }
+    {
+      nrow++;
+      for (i=1;i<=ncol;i++) cell[nrow,i]=$i;
+      v=$8;
+      if (v=="PASS") n_pass++; else if (v=="FAIL") n_fail++;
+      else if (v=="SKIP") n_skip++; else n_manual++;
+    }
+    END {
+      verdict = (n_fail>0) ? "FAIL" : ((n_skip>0) ? "HOLD" : "PASS");
+      vcls = (verdict=="FAIL") ? "fail" : ((verdict=="HOLD") ? "hold" : "pass");
+      vtext = (verdict=="FAIL") ? "不通过（FAIL）" \
+            : ((verdict=="HOLD") ? "暂缓（HOLD）" : "通过（PASS）");
+      note = (verdict=="FAIL") ? "存在不达标项，详见下表中标红的行。" \
+           : ((verdict=="HOLD") ? "无不达标项，但存在未执行/无法判定的项（SKIP），不足以直接判定通过。" \
+           : "全部可自动判定的项均达标。标注「人工核对」的项仍需验收人对照采购清单确认。");
+      printf "<div class=\"banner %s\">机器判定：%s<small>%s</small></div>\n", vcls, vtext, note;
+      printf "<div class=\"chips\"><span class=\"chip pass\">达标 %d</span>", n_pass;
+      printf "<span class=\"chip fail\">不达标 %d</span>", n_fail;
+      printf "<span class=\"chip skip\">未判定 %d</span>", n_skip;
+      printf "<span class=\"chip manual\">人工核对 %d</span></div>\n", n_manual;
+
+      print "<h2>一、逐项判定</h2><table><thead><tr>";
+      for (i=2;i<=ncol;i++) printf "<th>%s</th>", esc(hdr[i]);
+      print "</tr></thead><tbody>";
+      lastsec="";
+      for (r=1;r<=nrow;r++) {
+        sec=cell[r,1];
+        if (sec != lastsec) {
+          printf "<tr class=\"sec\"><td colspan=\"%d\">第 %s 章</td></tr>\n", ncol-1, esc(sec);
+          lastsec=sec;
+        }
+        v=cell[r,8];
+        printf "<tr%s>", (v=="FAIL") ? " class=\"fail\"" : "";
+        printf "<td>%s</td><td>%s</td>", esc(cell[r,2]), esc(cell[r,3]);
+        printf "<td class=\"cmd\">%s</td>", esc(cell[r,4]);
+        printf "<td class=\"val\">%s</td><td>%s</td>", esc(cell[r,5]), esc(cell[r,6]);
+        printf "<td class=\"mgn\">%s</td>", esc(cell[r,7]);
+        printf "<td><span class=\"v %s\">%s</span></td>", cls(v), esc(v);
+        printf "<td class=\"note\">%s</td></tr>\n", esc(cell[r,9]);
+      }
+      print "</tbody></table>";
+
+      if (pergpu != "") {
+        first=1;
+        while ((getline line < pergpu) > 0) {
+          nf = split(line, f, "\t");
+          if (first) {
+            print "<h2>二、每张 GPU 实测明细</h2><table><thead><tr>";
+            for (i=1;i<=nf;i++) printf "<th>%s</th>", esc(f[i]);
+            print "</tr></thead><tbody>"; first=0;
+          } else {
+            print "<tr>";
+            for (i=1;i<=nf;i++) printf "<td%s>%s</td>", (i<=2?"":" class=\"cmd\""), esc(f[i]);
+            print "</tr>";
+          }
+        }
+        close(pergpu);
+        if (!first) print "</tbody></table>";
+      }
+
+      print "<div class=\"sign\"><div>验收人签字 / 日期</div><div>交付方签字 / 日期</div><div>见证人签字 / 日期</div></div>";
+      print "<footer>本表由 GPU 离线验收工具自动生成，判定依据见 profiles/ 中该机型的阈值档案；";
+      print "「未判定」不等于通过。原始日志与命令输出保存在同一日志目录下，可逐条复核。</footer>";
+      print "</div></body></html>";
+    }
+  ' "$tsv" > "$out"
+}
+
 report_summary() {
   local total=$((ACC_N_PASS + ACC_N_FAIL + ACC_N_SKIP + ACC_N_MANUAL))
   local verdict="PASS"

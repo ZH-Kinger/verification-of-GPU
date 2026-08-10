@@ -27,6 +27,15 @@ ECC 状态确认  8/8 Enabled         全部 Enabled      —        PASS
 阈值为 0 的项（ECC/CRC）给绝对差值。它的用处是识别"刚好压线通过"的机器 ——
 +1.5% 和 +40% 都算 PASS，但前者值得复测。
 
+四种格式同时产出，用途不同：
+
+| 文件 | 用途 |
+|------|------|
+| `acceptance_report.html` | **交付给甲方**：自包含单文件，浏览器直接打开或打印存 PDF，含判定横幅、章节分组、不达标行标红、签字栏 |
+| `acceptance_report.csv` | Excel 打开（带 UTF-8 BOM，含逗号字段已按 RFC4180 转义） |
+| `acceptance_report.tsv` | 机器可读，供 `compare_batch.sh` 等下游脚本消费 |
+| `acceptance_report.txt` | 终端里直接看 |
+
 另出一张 `per_gpu_detail.tsv`：每张卡的 SN / UUID / VBIOS / 显存 / 功耗上限 /
 温度 / 时钟 / PCIe / NVLink 活跃链路 / ECC 计数 / 持久模式。判定表给的是"最差
 那张卡"，这张表用来追溯到具体是哪一张 —— 掉队卡定位、RMA 证据链、同批次比对都靠它。

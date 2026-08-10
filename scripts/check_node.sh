@@ -813,6 +813,21 @@ report_summary || true
 
 # 交付用 CSV（Excel 可直接打开）
 tsv_to_csv "$LOG_DIR/acceptance_report.tsv" "$LOG_DIR/acceptance_report.csv"
+
+# 交付用 HTML（自包含，可直接发给甲方或打印存 PDF）
+{
+  echo "机器 SN: $(sed -n 's/^Host SN: //p' "$LOG_DIR/session.txt" 2>/dev/null)"
+  echo "机型档案: ${PROFILE_NAME:-?} (${ACC_PROFILE:-?})"
+  echo "架构: ${PROFILE_ARCH_NOTE:-?}"
+  echo "采集时间: $(sed -n 's/^Timestamp: //p' "$LOG_DIR/session.txt" 2>/dev/null) $(sed -n 's/^Timezone: //p' "$LOG_DIR/session.txt" 2>/dev/null)"
+  echo "报告生成: $(date '+%F %T %Z')"
+  echo "日志目录: $(basename "$LOG_DIR")"
+  clk="$(sed -n 's/^Clock synced: //p' "$LOG_DIR/session.txt" 2>/dev/null)"
+  [ "$clk" = "no" ] && echo "时钟提醒: 系统时钟未与 NTP 同步，时间戳仅供排序参考"
+} > "$TMP/meta.txt"
+write_html_report "$LOG_DIR/acceptance_report.tsv" "$LOG_DIR/acceptance_report.html" \
+  "GPU 验收判定表" "$TMP/meta.txt" \
+  "$([ -s "$LOG_DIR/per_gpu_detail.tsv" ] && echo "$LOG_DIR/per_gpu_detail.tsv")"
 [ -s "$LOG_DIR/per_gpu_detail.tsv" ] && \
   tsv_to_csv "$LOG_DIR/per_gpu_detail.tsv" "$LOG_DIR/per_gpu_detail.csv"
 
@@ -820,5 +835,6 @@ echo
 echo "判定表(人读): $LOG_DIR/acceptance_report.txt"
 echo "判定表(机读): $LOG_DIR/acceptance_report.tsv"
 echo "判定表(Excel): $LOG_DIR/acceptance_report.csv"
+echo "判定表(HTML):  $LOG_DIR/acceptance_report.html   ← 可直接发甲方/打印存 PDF"
 [ -s "$LOG_DIR/per_gpu_detail.tsv" ] && echo "每卡明细:     $LOG_DIR/per_gpu_detail.tsv"
 [ "${ACC_VERDICT:-FAIL}" = "PASS" ]

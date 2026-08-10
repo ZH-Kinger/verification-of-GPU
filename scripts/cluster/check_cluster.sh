@@ -210,8 +210,18 @@ report_summary || true
 } > "$PARENT/cluster_report.txt"
 
 tsv_to_csv "$PARENT/cluster_report.tsv" "$PARENT/cluster_report.csv"
+CMETA="$(mktemp)"
+{
+  echo "机型档案: ${PROFILE_NAME:-?} (${ACC_PROFILE:-?})"
+  echo "报告生成: $(date '+%F %T %Z')"
+  echo "日志目录: $(basename "$PARENT")"
+} > "$CMETA"
+write_html_report "$PARENT/cluster_report.tsv" "$PARENT/cluster_report.html" \
+  "多机验收判定表（§5 RoCE v2 + §6 跨节点 NCCL）" "$CMETA"
+rm -f "$CMETA"
 
 echo
 echo "判定表: $PARENT/cluster_report.txt"
 echo "Excel:  $PARENT/cluster_report.csv"
+echo "HTML:   $PARENT/cluster_report.html"
 [ "${ACC_VERDICT:-FAIL}" = "PASS" ]

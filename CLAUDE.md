@@ -72,7 +72,11 @@ sudo bash scripts/run_acceptance.sh soak <log_dir>        # §8 long soak, then 
 sudo bash scripts/run_acceptance.sh dcgm                  # legacy v1.0 collection path
 ```
 
-`check_node.sh` emits `acceptance_report.tsv`/`.txt` plus `per_gpu_detail.tsv`.
+`check_node.sh` emits `acceptance_report.tsv`/`.csv`/`.html`/`.txt` plus `per_gpu_detail.tsv`.
+The HTML is the customer-facing deliverable: fully self-contained (no CDN — this runs
+offline), print/PDF friendly, with a verdict banner and sign-off lines. Anything written
+into it must be HTML-escaped: the command column literally contains `<0-7>`, `<peer_ip>`
+and `&&`, which a browser would otherwise swallow.
 The report columns mirror the customer's own table (章节/模块/测试项/测试手段·命令)
 and add 实测值/余量/判定. **Measured values must always be concrete numbers, never
 yes/no** — `8/8 Enabled`, `56/56 个 GPU 对为 NV18`, `12 个，转速 8000~8600 RPM` — because
