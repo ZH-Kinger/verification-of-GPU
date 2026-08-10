@@ -60,6 +60,10 @@ BIN_DIR="$(tools_bin_dir)"
 {
   echo "Offline GPU Acceptance — 单机采集"
   echo "Timestamp: $ts"
+  # live 系统默认 UTC 且离线无 NTP，时间戳可能既不是本地时间也不准。
+  # 把时区和 RTC 状态一并记下来，事后对账才有依据。
+  echo "Timezone: $(date +%Z%z) ($(timedatectl show -p Timezone --value 2>/dev/null || echo unknown))"
+  echo "Clock synced: $(timedatectl show -p NTPSynchronized --value 2>/dev/null || echo unknown)"
   echo "Host SN: $host_sn"
   echo "Profile: $ACC_PROFILE ($PROFILE_NAME)"
   echo "Arch note: $PROFILE_ARCH_NOTE"
@@ -194,10 +198,17 @@ section_3_gpu() {
       run_cmd dcgm_diag_r4 dcgmi diag -r 4 -j
     fi
   else
-    echo "dcgmi skipped or not found" > "$LOG_DIR/dcgm_missing.txt"
+    if [ "${SKIP_DCGM:-0}" = "1" ]; then
+      echo "SKIP_DCGM=1（操作员主动跳过）" > "$LOG_DIR/dcgm_skipped.txt"
+    else
+      echo "dcgmi not found — 见 docs/tooling_gaps.md（打包缺口）" > "$LOG_DIR/dcgm_missing.txt"
+    fi
   fi
 
   # §3 的 1 小时 gpu_burn
+  if [ "${SKIP_GPU_BURN:-0}" = "1" ]; then
+    echo "SKIP_GPU_BURN=1（操作员主动跳过）" > "$LOG_DIR/gpu_burn_skipped.txt"
+  fi
   if [ "${SKIP_GPU_BURN:-0}" != "1" ]; then
     local burn
     burn="$(bin_or_path gpu_burn)"
@@ -225,7 +236,8 @@ section_4_nvlink() {
   fi
 
   if [ "${SKIP_BENCH:-0}" = "1" ]; then
-    log "  SKIP_BENCH=1，跳过带宽测试"
+    log "  SKIP_BENCH=1，跳过带宽/集合通信测试（拓扑、链路、FM 仍然采集）"
+    echo "SKIP_BENCH=1" > "$LOG_DIR/bench_skipped.txt"
     return 0
   fi
 
@@ -263,7 +275,12 @@ section_4_nvlink() {
     echo "all_gather_perf not found" > "$LOG_DIR/nccl_all_gather_missing.txt"
   fi
 
-  # Fabric Manager
+}
+
+# Fabric Manager 单独成段。它跟带宽测试没有任何关系，放在 section_4 里会被
+# SKIP_BENCH=1 一起跳过 —— 一个只想快速看静态项的操作员会静默丢掉这一项。
+section_fabric_manager() {
+  log "§4/§7 Fabric Manager"
   if have systemctl; then
     run_shell fm_status "systemctl status nvidia-fabricmanager --no-pager 2>&1 || true"
     run_shell fm_is_active "systemctl is-active nvidia-fabricmanager 2>&1 || true"
@@ -309,6 +326,7 @@ main() {
   section_mem_stress
   section_3_gpu
   section_4_nvlink
+  section_fabric_manager
   section_7_stack
   collect_kernel_logs "_after"
   log "采集完成"

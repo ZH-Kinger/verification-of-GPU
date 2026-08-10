@@ -491,6 +491,29 @@ else
     bad "驱动不认识这些字段:$bad_fields"
   fi
 
+  # SKIP_BENCH 只该跳过基准测试。它曾经把 Fabric Manager 状态也一起跳过了 ——
+  # 一个不相干的开关静默丢掉整项检查，是这个项目反复出现的失效模式。
+  CB="$WORKROOT/collect_bench"
+  LOG_DIR="$CB" SKIP_DCGM=1 SKIP_GPU_BURN=1 SKIP_BENCH=1 SYS_MEM_STRESS_SECONDS=0 \
+    timeout 120 bash "$BASE_DIR/scripts/collect_node.sh" b300_8gpu >/dev/null 2>&1
+  if [ -s "$CB/fm_is_active.txt" ] && [ -s "$CB/nvidia_smi_topo.txt" ]; then
+    ok "SKIP_BENCH=1 仍采集 Fabric Manager 与拓扑（只跳过基准测试）"
+  else
+    bad "SKIP_BENCH=1 连带跳过了不相干的采集项"
+  fi
+  # 主动跳过 vs 工具缺失：责任归属不同，判定表必须分开写
+  bash "$BASE_DIR/scripts/check_node.sh" "$CB" b300_8gpu >/dev/null 2>&1
+  if awk -F'\t' '$3=="DCGM Level 3"{print $9}' "$CB/acceptance_report.tsv" | grep -q '主动跳过'; then
+    ok "判定表区分「操作员主动跳过」与「工具缺失」"
+  else
+    bad "判定表未区分主动跳过与工具缺失"
+  fi
+  if grep -q '^Timezone:' "$CB/session.txt" && grep -q '^Clock synced:' "$CB/session.txt"; then
+    ok "记录时区与时钟同步状态（离线无 NTP 时时间戳需标注）"
+  else
+    bad "未记录时区/时钟同步状态"
+  fi
+
   # 长稳烤机的后台进程回收：跑 8 秒然后确认没有残留的采样器。
   # GNU timeout 默认把子进程放进自己新建的进程组，按作业进程组回收够不着它，
   # 被中断的 18h 烤机会留下一个一直在跑的 nvidia-smi dmon。

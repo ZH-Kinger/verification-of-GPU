@@ -336,10 +336,17 @@ else
 fi
 
 # DCGM：不依赖 jq，直接统计 JSON 里的 status 取值
+# 「主动跳过」和「工具缺失」性质完全不同：前者是流程决定，后者是打包缺口
+# 需要回制盘机补。混成一句 "未运行或 dcgmi 缺失" 等于把责任归属也一起模糊掉。
+skip_reason() { # <默认说明>
+  if [ -f "$LOG_DIR/dcgm_skipped.txt" ]; then echo "操作员主动跳过（SKIP_DCGM=1）"
+  elif [ -f "$LOG_DIR/dcgm_missing.txt" ]; then echo "dcgmi 未安装 —— 打包缺口，见 docs/tooling_gaps.md"
+  else echo "$1"; fi
+}
 check_dcgm() {
   local name="$1" label="$2"
   if ! cap_exists "$name"; then
-    report_row 3 "GPU 诊断" "$label" "N/A" "全部 PASS" SKIP "未运行或 dcgmi 缺失"
+    report_row 3 "GPU 诊断" "$label" "未执行" "全部 PASS" SKIP "$(skip_reason "未运行")"
     return
   fi
   local rc fails warns passes
@@ -385,7 +392,14 @@ if cap_exists gpu_burn_1h; then
   tmax="$(colN_num temp_after_burn 2 | num_max)"
   report_le 1 "散热" "GPU 温度(压测期间)" "$tmax" "$GPU_TEMP_MAX_C" "°C" "gpu_burn 结束时刻采样；连续采样见 §8"
 else
-  report_row 3 "GPU 压力" "1 小时压测" "N/A" "全部 PASS" SKIP "gpu_burn 未安装或被跳过"
+  if [ -f "$LOG_DIR/gpu_burn_skipped.txt" ]; then
+    burn_why="操作员主动跳过（SKIP_GPU_BURN=1）"
+  elif [ -f "$LOG_DIR/gpu_burn_missing.txt" ]; then
+    burn_why="gpu_burn 未安装 —— 打包缺口，见 docs/tooling_gaps.md"
+  else
+    burn_why="未执行"
+  fi
+  report_row 3 "GPU 压力" "1 小时压测" "未执行" "全部 PASS" SKIP "$burn_why"
 fi
 
 pm_ok="$(colN q_persistence_after 2 | all_equal "Enabled")"
@@ -771,7 +785,9 @@ report_summary || true
   echo " 日志目录 : $(basename "$LOG_DIR")"
   echo " 机型档案 : ${PROFILE_NAME:-?} (${ACC_PROFILE:-?})"
   echo " 主机 SN  : $(grep -oE '^Host SN: .*' "$LOG_DIR/session.txt" 2>/dev/null | cut -d' ' -f3-)"
-  echo " 采集时间 : $(grep -oE '^Timestamp: .*' "$LOG_DIR/session.txt" 2>/dev/null | cut -d' ' -f2-)"
+  echo " 采集时间 : $(grep -oE '^Timestamp: .*' "$LOG_DIR/session.txt" 2>/dev/null | cut -d' ' -f2-) $(sed -n 's/^Timezone: //p' "$LOG_DIR/session.txt" 2>/dev/null)"
+  clk="$(sed -n 's/^Clock synced: //p' "$LOG_DIR/session.txt" 2>/dev/null)"
+  [ "$clk" = "no" ] && echo " 时钟提醒 : 系统时钟未与 NTP 同步（离线环境常见），时间戳仅供排序参考"
   echo " 生成时间 : $(date '+%F %T')"
   echo
   echo "一、逐项判定（对照《验收标准》§1-§8）"
