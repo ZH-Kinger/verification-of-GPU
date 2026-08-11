@@ -14,6 +14,14 @@ mkdir -p "$DEST"
 REPO="https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64"
 
 # filename  expected-sha256 (from DOWNLOAD_MANIFEST.txt)
+#
+# 注意 DCGM：下面抓的 3.3.9 只适用于 H200（profiles/h200_8gpu.env 要求 >=3.3）。
+# Blackwell(B300/GB300) 需要 DCGM 4.x —— profiles/b300_8gpu.env 的
+# DCGM_MIN_VERSION=4.0 且 DCGM_DEB_GLOB 指向 datacenter-gpu-manager-4*.deb。
+# 3.3.9 在 B300 上不识别 GPU，dcgmi diag 会「没测也没报错」，判定脚本会把
+# 「JSON 里没有任何 Pass 记录」判成 FAIL 而不是放过 —— 但包本身仍需替换。
+# NVIDIA 的 DCGM 4.x 包名带 CUDA 后缀且随版本变化，无法在此写死；
+# 取包时请到 CUDA noble 仓库确认实际文件名后加进下表（见文末提示）。
 declare -A DEBS=(
   [cuda-keyring_1.1-1_all.deb]="d2a6b11c096396d868758b86dab1823b25e14d70333f1dfa74da5ddaf6a06dba"
   [cuda-compat-13-3_610.43.02-1ubuntu1_amd64.deb]="4d3b3bfe6e6a53b2153383b2f74f139339c7e5ffbf657d6af7c3967b8b670386"
@@ -49,3 +57,41 @@ else
 fi
 
 echo "downloads/nvidia:"; ls -la "$DEST"
+
+# ---------------------------------------------------------------------------
+# 逐个 profile 核对：抓到的包能不能满足它的版本要求。
+# 不做这一步的话，profile 要求 DCGM 4.x 而 U 盘里躺着 3.3.9 这种不一致
+# 会一直藏到现场才暴露。
+echo
+echo "=== 与各机型 profile 的版本要求核对 ==="
+for prof in "$ROOT"/profiles/*.env; do
+  [ -f "$prof" ] || continue
+  name="$(basename "$prof" .env)"
+  need="$(sed -n 's/^DCGM_MIN_VERSION="\([^"]*\)".*/\1/p' "$prof")"
+  glob="$(sed -n 's/^DCGM_DEB_GLOB="\([^"]*\)".*/\1/p' "$prof")"
+  [ -n "$glob" ] || continue
+  # shellcheck disable=SC2086
+  if ls $ROOT/downloads/$glob >/dev/null 2>&1; then
+    printf '  [OK ] %-12s DCGM >=%-5s 已有匹配包: %s\n' \
+      "$name" "$need" "$(basename "$(ls $ROOT/downloads/$glob | head -n1)")"
+  else
+    printf '  [缺 ] %-12s DCGM >=%-5s 没有匹配 %s 的包\n' "$name" "$need" "$glob"
+    MISSING_DCGM=1
+  fi
+done
+if [ "${MISSING_DCGM:-0}" = "1" ]; then
+  cat <<'NOTE'
+
+  上面标 [缺] 的机型：U 盘里的 DCGM 版本不满足其 profile 要求。
+  Blackwell(B300/GB300) 必须用 DCGM 4.x —— 3.3.9 不识别这块 GPU，
+  dcgmi diag 会「跳过所有测试项且不报错」。
+
+  补法：到下面的仓库确认 DCGM 4.x 的实际文件名，连同 sha256 加进本脚本的
+  DEBS 表，重跑 bootstrap.sh nvidia：
+    https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/
+  （筛 datacenter-gpu-manager-4 开头的包）
+
+  在补上之前，B300 机型的 §3 DCGM Level 3/4 两项会判 FAIL 或 SKIP，
+  不会被误判成通过。
+NOTE
+fi

@@ -1,11 +1,25 @@
 # 离线单机 GPU 验收 SOP
 
-版本：v2.0（可执行版，对应本 U 盘实际工具与脚本）
+版本：v3.0（对应本 U 盘实际工具与脚本）
 
 适用范围：无系统、无网络、无管理口的裸金属单机服务器；GPU 为 NVIDIA
 H200、B300/GB300 或同等级数据中心 GPU。
 
-判定阈值统一以 `docs/acceptance_criteria.md` 为准，本 SOP 只给流程与命令。
+**验收分两个阶段**：
+
+| 阶段 | 内容 | 启动模式 | 入口 |
+|------|------|---------|------|
+| 一 | fieldiag 硬件主验收 | fieldiag mode（驱动被屏蔽） | `run_acceptance.sh fieldiag` |
+| 二 | 甲方《验收标准》§1-§4 §7 §8 逐项自动判定 | dcgm mode（驱动放行） | `run_acceptance.sh standard <机型>` |
+
+阶段二的阈值不写在本文，全部在 `profiles/<机型>.env`（每条都标了来源：
+`[标准]` 甲方原值 / `[推导]` 附推导过程 / `[待校准]` 待实测回填），
+项与阈值的对照见 `docs/acceptance_criteria_b300.md`。
+H200 时期的散文式标准 `docs/acceptance_criteria.md` 仍适用于其"硬性 FAIL 条件"。
+
+多机（§5 RoCE + §6 跨节点 NCCL）需要组网与 MPI，不在本 SOP 的单机流程内，
+见 `docs/cluster_runbook.md`。
+
 首次在某机型上验证本 U 盘时，先按 `docs/first_target_run_checklist.md` 走一遍。
 
 ---
@@ -191,6 +205,86 @@ sudo bash scripts/build_official_stress_tools.sh
 
 ---
 
+## 7bis. 阶段二 —— 甲方《验收标准》逐项自动判定（dcgm 模式）
+
+上面 B 线的手工核对仍然有效，但阶段二把《验收标准》§1-§4 §7 §8 的每一项
+做成了自动判定。**在 dcgm 模式下执行，全程需要 root。**
+
+### 7bis.1 补装标准新增要求的工具
+
+```bash
+sudo bash scripts/install_offline_tools.sh    # ipmitool/ethtool/nvme-cli/openmpi/stressapptest
+```
+缺哪个，对应验收项就判 SKIP 而不是 PASS。
+
+### 7bis.2 环境预检（必做）
+
+```bash
+sudo bash scripts/preflight.sh b300_8gpu      # H200 机型用 h200_8gpu
+```
+
+- [STOP] 报 `no kernel image available` → 预编译二进制的 fatbin 架构与本机 GPU
+  不符，§3/§4/§8 的带宽与压测项全部无效。按 `docs/cuda_arch_decision.md`
+  重编后再继续，**不要带着这个问题往下走**。
+- 记下它打印的"实测计算能力"和"缺失工具清单"——这两条决定后续所有工作。
+
+### 7bis.3 采集 + 自动判定
+
+```bash
+sudo bash scripts/run_acceptance.sh standard b300_8gpu
+```
+
+默认包含 §3 的 1 小时 `gpu_burn`、30 分钟系统内存压测和 `dcgmi diag -r 3`，
+整轮约 2 小时。只看静态项：`SKIP_GPU_BURN=1 SKIP_DCGM=1 SYS_MEM_STRESS_SECONDS=0`。
+补 Level 4：`RUN_DCGM_R4=1`（很慢）。
+
+### 7bis.4 §7 驱动参数（改完需重启）
+
+```bash
+sudo bash scripts/set_nvidia_modprobe_params.sh b300_8gpu
+```
+
+### 7bis.5 长稳烤机（§8）
+
+```bash
+sudo bash scripts/run_acceptance.sh soak logs/<刚才的目录> b300_8gpu
+```
+
+跑完自动重新判定并把 §8 并入同一张表。日志目录必须在持久分区上。
+中途被打断会如实记录实际时长并判 FAIL——被中断的长稳不构成有效证据。
+
+### 7bis.6 读判定表
+
+```text
+logs/<时间戳>_<SN>/
+  acceptance_report.html   交付甲方：浏览器打开 / 打印存 PDF / 签字
+  acceptance_report.csv    Excel
+  per_gpu_detail.tsv       每卡 SN/显存/功耗/温度/NVLink —— 定位掉队卡、RMA 证据链
+```
+
+判定值四态，**SKIP 不等于 PASS**：
+
+```text
+PASS    达标
+FAIL    不达标 —— 任意一项 FAIL，整机 FAIL
+SKIP    未执行或无法判定（工具缺失 / 主动跳过 / 阈值未定义），整机判 HOLD
+MANUAL  标准要求人工核对（§2 规格项）
+```
+
+脚本退出码就是整机结论：0=PASS，1=FAIL 或 HOLD。批量验收可直接据此拦截。
+
+### 7bis.7 同批次比对（验完一批之后）
+
+```bash
+bash scripts/compare_batch.sh logs/ b300_8gpu
+```
+
+单机判定回答不了"这台在这批里是不是明显落后"。一台每项都过绝对阈值、
+但样样比同批中位数低 12% 的机器，通常是散热或供电问题——
+`docs/acceptance_criteria.md` 把"低于中位数 10% 以上"列为硬性 FAIL。
+
+---
+
 ## 8. SOP-判定与归档
 
 ```bash
@@ -224,6 +318,12 @@ sudo bash scripts/run_acceptance.sh fieldiag        # 硬件主验收
 
 # —— 重启选 dcgm mode ——
 sudo mount -L GPU_DATA /mnt/gpu_acceptance && cd /mnt/gpu_acceptance/GPU_Offline_Acceptance
+sudo bash scripts/install_offline_nvidia_tools.sh && sudo bash scripts/install_offline_cuda_runtime.sh
+sudo bash scripts/install_offline_tools.sh
+sudo bash scripts/preflight.sh b300_8gpu             # STOP: no kernel image -> 先重编
+sudo bash scripts/run_acceptance.sh standard b300_8gpu
+sudo bash scripts/run_acceptance.sh soak logs/<上一步的目录> b300_8gpu
+# 交付物：logs/<目录>/acceptance_report.html
 sudo bash scripts/install_offline_nvidia_tools.sh   # 驱动+DCGM+FM
 sudo bash scripts/install_offline_cuda_runtime.sh   # CUDA运行时+NCCL
 sudo bash scripts/run_acceptance.sh dcgm            # DCGM+带宽+采集

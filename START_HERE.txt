@@ -1,12 +1,65 @@
-﻿GPU Offline Acceptance USB
+GPU Offline Acceptance USB
 
-Boot partition: UBUNTU_BOOT
-Data partition: GPU_DATA
-Persistence: raw partition; initialize from Linux with scripts/init_persistence_partition.sh
+分区
+  UBUNTU_BOOT   可 UEFI 启动的 Ubuntu Server 24.04
+  GPU_DATA      本项目、工具、离线包、日志
+  writable      持久化分区（已格式化；如被清空用 scripts/init_persistence_partition.sh 重建）
 
-Start here:
-1. Boot target server from UEFI USB.
-2. Mount GPU_DATA in Linux.
-3. Run:
+启动菜单里有两种模式：
+  fieldiag mode  （默认）NVIDIA/nouveau 驱动被屏蔽 —— 只用于跑 fieldiag
+  dcgm mode      驱动放行 —— 甲方《验收标准》的绝大多数项都需要它
+
+--------------------------------------------------------------------------
+最短路径
+--------------------------------------------------------------------------
+0) UEFI 从 U 盘启动，挂载数据分区
+
+   sudo mkdir -p /mnt/gpu_acceptance
+   sudo mount -L GPU_DATA /mnt/gpu_acceptance
    cd /mnt/gpu_acceptance/GPU_Offline_Acceptance
-   bash scripts/offline_gpu_acceptance_collect.sh
+
+阶段一 —— fieldiag 硬件主验收（在默认的 fieldiag mode 下）
+
+   sudo bash scripts/run_acceptance.sh fieldiag
+
+阶段二 —— 甲方《验收标准》逐项自动判定（重启选 dcgm mode）
+
+   sudo bash scripts/install_offline_nvidia_tools.sh    # 驱动 + DCGM + Fabric Manager
+   sudo bash scripts/install_offline_cuda_runtime.sh    # CUDA 运行时 + NCCL + cuBLAS
+   sudo bash scripts/install_offline_tools.sh           # ipmitool/ethtool/nvme/openmpi/stressapptest
+
+   sudo bash scripts/preflight.sh b300_8gpu             # 先预检！见下方 STOP 条件
+   sudo bash scripts/run_acceptance.sh standard b300_8gpu
+
+   # 长稳烤机（§8，18 小时），跑完自动并入同一张判定表
+   sudo bash scripts/run_acceptance.sh soak logs/<刚才生成的目录> b300_8gpu
+
+机型档案：B300/GB300 用 b300_8gpu，H200 用 h200_8gpu。
+所有阈值和版本要求都在 profiles/<机型>.env 里，脚本不含硬编码数值。
+
+--------------------------------------------------------------------------
+产出（在 logs/<时间戳>_<机器SN>/ 下）
+--------------------------------------------------------------------------
+   acceptance_report.html   交付甲方：浏览器打开 / 打印存 PDF / 签字
+   acceptance_report.csv    Excel 打开
+   per_gpu_detail.tsv       每张卡的 SN/显存/功耗/温度/NVLink，用于定位掉队卡
+   其余 *.txt               每条命令的原始输出，可逐条复核
+
+   退出码就是这台机器的结论：0=通过，1=不通过或暂缓。
+
+--------------------------------------------------------------------------
+必须停下来的情况
+--------------------------------------------------------------------------
+* preflight 报 "no kernel image available"
+    预编译二进制的架构和这块 GPU 对不上，带宽与压测项全部无效。
+    先按 docs/cuda_arch_decision.md 重编，不要带着这个问题往下走。
+* 忘了 sudo
+    dmidecode/ipmitool/dmesg/持久模式全采不到，判定表里"采集权限"会判 FAIL。
+    重新用 sudo 采一遍，本次结果不能作为验收依据。
+* 判定表出现 SKIP
+    SKIP 不等于通过。整机会判 HOLD，需逐条说明每个 SKIP 的处置。
+* 任意一张 GPU 不达标
+    整机不判 PASS。
+
+多机（RoCE + 跨节点 NCCL）不在这只 U 盘的单机流程里，见 docs/cluster_runbook.md。
+完整步骤与 STOP 条件见 docs/first_target_run_checklist.md。
