@@ -464,6 +464,71 @@ else
   bad "run_shell 未防住 profile 重置 locale"
 fi
 
+# ============================================ 6bis. §2 采购清单核对
+echo
+echo "== 6bis. §2 规格核对（对照采购清单 CSV）=="
+SPEC="$WORKROOT/spec"
+mkdir -p "$SPEC"; cp -r "$TEST_DIR/fixtures/node_b300_pass/"* "$SPEC/"
+printf 'Host SN: SN0001\nTimestamp: 2026-08-11_090000\n' > "$SPEC/session.txt"
+printf '/dev/nvme0n1 S1 3.84 TB\n/dev/nvme1n1 S2 3.84 TB\n/dev/nvme2n1 S3 3.84 TB\n/dev/nvme3n1 S4 3.84 TB\n' \
+  > "$SPEC/nvme_list.txt"
+printf 'System Information\n\tManufacturer: Dell Inc.\n' > "$SPEC/dmidecode_system.txt"
+printf 'Model name:  Intel(R) Xeon(R) 6776P\nSocket(s):   2\n' > "$SPEC/lscpu.txt"
+
+# 甲方多半用 Excel 存 CSV：带 UTF-8 BOM、CRLF 换行、型号里含逗号所以被引号包住。
+# 三者任意一个处理不好都会静默匹配失败。
+PLC="$WORKROOT/pl.csv"
+printf '\xEF\xBB\xBFSN,品牌,CPU型号,CPU路数,内存条数,内存单条GB,内存总GB,内存类型,内存频率MTs,NVMe数量,NVMe单盘TB,GPU型号,GPU数量,系统盘描述\r\n' > "$PLC"
+printf '*,Dell,"Intel Xeon 6776P, 2.0GHz",2,24,128,3072,DDR5,6400,4,3.84,B300,8,2 x 960GB RAID1\r\n' >> "$PLC"
+
+outsp="$(PURCHASE_LIST="$PLC" bash "$BASE_DIR/scripts/check_node.sh" "$SPEC" b300_8gpu 2>/dev/null)"
+for it in "品牌一致性" "CPU 型号" "CPU 路数" "内存条数" "内存单条容量" "内存总容量" \
+          "内存类型" "内存频率" "本地 NVMe 数量" "NVMe 单盘容量" "GPU 型号"; do
+  line="$(printf '%s\n' "$outsp" | grep -F "$it" | head -n1)"
+  if printf '%s' "$line" | grep -q '\[PASS'; then
+    ok "§2 $it 与清单相符 -> PASS"
+  else
+    bad "§2 $it 未通过: $(printf '%s' "$line" | tr -s ' ')"
+  fi
+done
+# 型号归一化：清单写 "Intel Xeon 6776P"，机器报 "Intel(R) Xeon(R) 6776P"
+printf '%s\n' "$outsp" | grep -F "CPU 型号" | grep -q 'Intel(R)' \
+  && ok "型号比对忽略 (R)/(TM)/空格标点后仍能匹配" || bad "型号归一化失效"
+# BOM/CRLF 处理：首列名若带 BOM，SN 列永远匹配不上，清单会显示未加载
+printf '%s\n' "$outsp" | grep -F "采购清单" | grep -q '已加载' \
+  && ok "Excel 存出的 CSV（BOM + CRLF + 引号含逗号）能正确读取" \
+  || bad "未能读取 Excel 格式的 CSV"
+
+# 不符项必须被抓出来，而不是靠人眼
+PLBAD="$WORKROOT/pl_bad.csv"
+sed 's/,24,128,3072,/,32,96,3072,/; s/,4,3.84,/,8,7.68,/' "$PLC" > "$PLBAD"
+outbad="$(PURCHASE_LIST="$PLBAD" bash "$BASE_DIR/scripts/check_node.sh" "$SPEC" b300_8gpu 2>/dev/null)"
+nfail="$(printf '%s\n' "$outbad" | grep '§2' | grep -c '\[FAIL')"
+if [ "$nfail" -ge 4 ]; then
+  ok "配置与清单不符时逐项判 FAIL（本例 $nfail 项）"
+else
+  bad "配置不符未被抓出（只有 $nfail 项 FAIL）"
+fi
+
+# 没有清单时必须保持人工核对，不能因为没得比就当通过
+outnp="$(PURCHASE_LIST="$WORKROOT/does-not-exist.csv" \
+         bash "$BASE_DIR/scripts/check_node.sh" "$SPEC" b300_8gpu 2>/dev/null)"
+if printf '%s\n' "$outnp" | grep -F "CPU 型号" | grep -q '\[MANUAL' \
+   && ! printf '%s\n' "$outnp" | grep '§2' | grep -q '\[PASS'; then
+  ok "未提供采购清单时 §2 保持人工核对（不伪造 PASS）"
+else
+  bad "未提供清单时 §2 判定不正确"
+fi
+
+# 具体 SN 的行应当覆盖通配行
+PLSN="$WORKROOT/pl_sn.csv"
+cp "$PLC" "$PLSN"
+printf 'SN0001,Dell,"Intel Xeon 6767P",2,24,128,3072,DDR5,6400,4,3.84,B300,8,x\r\n' >> "$PLSN"
+outsn="$(PURCHASE_LIST="$PLSN" bash "$BASE_DIR/scripts/check_node.sh" "$SPEC" b300_8gpu 2>/dev/null)"
+printf '%s\n' "$outsn" | grep -F "CPU 型号" | grep -q '\[FAIL' \
+  && ok "具体 SN 的行覆盖通配行 *（本机按 SN0001 的 6767P 判，故 FAIL）" \
+  || bad "SN 行未覆盖通配行"
+
 # ================================================== 7. 同批次比对
 echo
 echo "== 7. 同批次比对（跨机器找掉队的那台）=="

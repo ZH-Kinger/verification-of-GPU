@@ -543,6 +543,78 @@ write_html_report() {
   ' "$tsv" > "$out"
 }
 
+# 读采购清单 CSV，取出适用于某台机器的那一行，输出 "列名<TAB>值"。
+#
+#   csv_row_for <csv> <SN>
+#
+# 具体 SN 的行优先于通配行 "*"。空值列不输出（= 不参与核对）。
+#
+# 必须扛住甲方用 Excel 存出来的文件：
+#   - UTF-8 BOM：不剥掉的话首列名变成 "﻿SN"，SN 列永远匹配不上
+#   - CRLF 换行：不剥掉的话每行最后一个字段带 \r，数值比对全错
+#   - 带引号的字段：CPU 型号里出现逗号（"Xeon Platinum 8480+, 2.0GHz"）时
+#     朴素按逗号切分会把一行切成两半
+csv_row_for() {
+  local csv="$1" sn="$2"
+  [ -f "$csv" ] || return 1
+  awk -v want="$sn" '
+    function unq(s) {
+      sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s);
+      if (s ~ /^".*"$/) { s = substr(s, 2, length(s)-2); gsub(/""/, "\"", s) }
+      return s;
+    }
+    # 按 RFC4180 切分一行，结果放进全局数组 F，返回字段数
+    function split_csv(line, arr,   i, c, cur, inq, n) {
+      n = 0; cur = ""; inq = 0;
+      for (i = 1; i <= length(line); i++) {
+        c = substr(line, i, 1);
+        if (inq) {
+          if (c == "\"") {
+            if (substr(line, i+1, 1) == "\"") { cur = cur "\""; i++ }
+            else inq = 0;
+          } else cur = cur c;
+        } else if (c == "\"") inq = 1;
+        else if (c == ",") { arr[++n] = cur; cur = "" }
+        else cur = cur c;
+      }
+      arr[++n] = cur;
+      return n;
+    }
+    BEGIN { hdr_done = 0 }
+    {
+      sub(/\r$/, "");                       # CRLF
+      if (NR == 1) sub(/^\xef\xbb\xbf/, ""); # BOM
+      if ($0 ~ /^[ \t]*#/ || $0 ~ /^[ \t]*$/) next;
+      if (!hdr_done) { nh = split_csv($0, H); hdr_done = 1; next }
+      nf = split_csv($0, V);
+      key = unq(V[1]);
+      if (key == want)      { for (i=2;i<=nh;i++) if (unq(V[i]) != "") exact[unq(H[i])] = unq(V[i]); found_exact=1 }
+      else if (key == "*")  { for (i=2;i<=nh;i++) if (unq(V[i]) != "") star[unq(H[i])]  = unq(V[i]) }
+    }
+    END {
+      for (k in star)  if (!(k in exact)) printf "%s\t%s\n", k, star[k];
+      for (k in exact) printf "%s\t%s\n", k, exact[k];
+    }
+  ' "$csv"
+}
+
+# 型号类文本比对：忽略大小写、(R)/(TM)/®/™、空格与标点后互相包含即算匹配。
+# 清单写 "Intel Xeon 6776P"，机器报 "Intel(R) Xeon(R) 6776P" —— 直接比字符串必然不等。
+model_norm() {
+  printf '%s' "${1:-}" \
+    | tr 'A-Z' 'a-z' \
+    | sed -e 's/(r)//g' -e 's/(tm)//g' -e 's/®//g' -e 's/™//g' \
+    | tr -cd 'a-z0-9'
+}
+model_match() { # <实测> <期望>
+  local a b
+  a="$(model_norm "$1")"; b="$(model_norm "$2")"
+  [ -n "$a" ] && [ -n "$b" ] || return 1
+  case "$a" in *"$b"*) return 0 ;; esac
+  case "$b" in *"$a"*) return 0 ;; esac
+  return 1
+}
+
 report_summary() {
   local total=$((ACC_N_PASS + ACC_N_FAIL + ACC_N_SKIP + ACC_N_MANUAL))
   local verdict="PASS"

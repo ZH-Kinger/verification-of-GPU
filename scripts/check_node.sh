@@ -264,17 +264,83 @@ else
 fi
 
 # ========================================================== §2 基础配置规格
-# 标准第 2 章是"规格核对"，没有可自动判定的阈值 —— 提取实测值供人工比对采购清单。
+# 标准第 2 章是"规格核对"。给了采购清单就逐项自动比对，没给就照旧标人工核对 ——
+# 不能因为没清单就把这几项判成通过。
 cpu_model="$(cap lscpu | awk -F': *' '/Model name/{print $2; exit}')"
-report_row 2 "基础规格" "CPU 型号" "${cpu_model:-N/A}" "对照采购清单" MANUAL
-report_row 2 "基础规格" "内存规格" \
-  "${dmi_populated:-0} 条 × ${dmi_sizes:-?} @ ${dmi_speeds:-?}，合计 ${dmi_installed_gib:-?} GiB" \
-  "对照采购清单" MANUAL
+cpu_sockets="$(cap lscpu | awk -F': *' '/^Socket\(s\)/{gsub(/ /,"",$2); print $2; exit}')"
 sysdisk="$(cap lsblk | awk '$3=="disk"{print $1"("$2")"}' | tr '\n' ' ')"
-report_row 2 "基础规格" "系统盘/本地盘" "${sysdisk:-N/A}" "对照采购清单" MANUAL
 nvme_n="$(cap nvme_list | grep -c '^/dev/nvme')"
-report_row 2 "基础规格" "本地 NVMe 配置" "${nvme_n:-0} 块" "对照采购清单" MANUAL
-report_row 2 "基础规格" "品牌一致性" "见 dmidecode_system.txt" "整集群统一品牌" MANUAL
+# nvme list 的容量列在不同 nvme-cli 版本里位置不一，按 "数字 + TB/GB" 抓，统一折算成 TB
+nvme_tb="$(cap nvme_list | grep -oE '[0-9]+\.?[0-9]* *(TB|GB)' | head -n1 \
+           | awk '{v=$1+0; if($2=="GB") v=v/1000; if(v>0) printf "%.2f", v}')"
+sys_brand="$(cap dmidecode_system | awk -F': *' '/^[[:space:]]*Manufacturer/{print $2; exit}')"
+mem_type="$(dmi_mem | awk -F': *' '/^[[:space:]]*Type: /{if($2!="Unknown" && $2!="Other"){print $2; exit}}')"
+mem_one_gb="$(printf '%s' "${dmi_sizes:-}" | grep -oE '^[0-9]+' | head -n1)"
+mem_speed_n="$(printf '%s' "${dmi_speeds:-}" | grep -oE '^[0-9]+' | head -n1)"
+gpu_name="$(cap nvidia_smi_L | sed -n '1s/.*: \(.*\) (UUID.*/\1/p')"
+[ -z "$gpu_name" ] && gpu_name="$(colN q_overview 2 | sed -n '2p')"
+
+PURCHASE_LIST="${PURCHASE_LIST:-$BASE_DIR/inventory/purchase_list.csv}"
+HOST_SN="$(sed -n 's/^Host SN: //p' "$LOG_DIR/session.txt" 2>/dev/null)"
+declare -A PL=()
+pl_rows=0
+if [ -f "$PURCHASE_LIST" ]; then
+  while IFS=$'\t' read -r k v; do
+    [ -n "$k" ] && { PL["$k"]="$v"; pl_rows=$((pl_rows + 1)); }
+  done < <(csv_row_for "$PURCHASE_LIST" "${HOST_SN:-__none__}")
+fi
+
+# 文本类：忽略 (R)/(TM)/空格标点后互相包含即匹配
+spec_text() { # <项名> <实测> <清单列名> [期望展示后缀]
+  local item="$1" measured="$2" col="$3" want="${PL[$3]:-}"
+  if [ -z "$want" ]; then
+    report_row 2 "基础规格" "$item" "${measured:-N/A}" "对照采购清单" MANUAL \
+      "$( [ "$pl_rows" -gt 0 ] && echo "采购清单未填该列" || echo "未提供采购清单（见 templates/purchase_list_template.csv）")"
+  elif model_match "$measured" "$want"; then
+    report_row 2 "基础规格" "$item" "${measured:-N/A}" "$want" PASS "对照采购清单"
+  else
+    report_row 2 "基础规格" "$item" "${measured:-N/A}" "$want" FAIL "与采购清单不符"
+  fi
+}
+# 数值类：tol 为允许的相对偏差（0 = 必须相等）
+spec_num() { # <项名> <实测> <清单列名> <单位> <tol>
+  local item="$1" measured="$2" col="$3" unit="$4" tol="$5" want="${PL[$3]:-}"
+  if [ -z "$want" ]; then
+    report_row 2 "基础规格" "$item" "${measured:-N/A} $unit" "对照采购清单" MANUAL \
+      "$( [ "$pl_rows" -gt 0 ] && echo "采购清单未填该列" || echo "未提供采购清单")"
+  elif ! is_num "$measured"; then
+    report_row 2 "基础规格" "$item" "N/A" "$want $unit" SKIP "未能从采集结果解析出实测值"
+  elif awk -v a="$measured" -v b="$want" -v t="$tol" \
+         'BEGIN{d=a-b; if(d<0)d=-d; exit !(d <= b*t + 1e-9)}'; then
+    report_row 2 "基础规格" "$item" "$measured $unit" "$want $unit" PASS "对照采购清单"
+  else
+    report_row 2 "基础规格" "$item" "$measured $unit" "$want $unit" FAIL "与采购清单不符"
+  fi
+}
+
+if [ "$pl_rows" -gt 0 ]; then
+  report_row 2 "基础规格" "采购清单" "已加载 ${pl_rows} 项（SN=${HOST_SN:-未知}）" \
+    "$(basename "$PURCHASE_LIST")" PASS "以下 §2 各项按清单自动核对"
+else
+  report_row 2 "基础规格" "采购清单" "未提供" "inventory/purchase_list.csv" MANUAL \
+    "填了清单后 §2 可自动核对，模板见 templates/purchase_list_template.csv"
+fi
+
+spec_text "品牌一致性"     "${sys_brand:-}"   "品牌"
+spec_text "CPU 型号"       "${cpu_model:-}"   "CPU型号"
+spec_num  "CPU 路数"       "${cpu_sockets:-}" "CPU路数"    "路"  0
+spec_num  "内存条数"       "${dmi_populated:-}" "内存条数" "条"  0
+spec_num  "内存单条容量"   "${mem_one_gb:-}"  "内存单条GB" "GB" 0
+spec_num  "内存总容量"     "${dmi_installed_gib:-}" "内存总GB" "GiB" 0.02
+spec_text "内存类型"       "${mem_type:-}"    "内存类型"
+spec_num  "内存频率"       "${mem_speed_n:-}" "内存频率MTs" "MT/s" 0
+spec_num  "本地 NVMe 数量" "${nvme_n:-0}"     "NVMe数量"   "块"  0
+spec_num  "NVMe 单盘容量"  "${nvme_tb:-}"     "NVMe单盘TB" "TB"  0.05
+spec_text "GPU 型号"       "${gpu_name:-}"    "GPU型号"
+spec_num  "GPU 数量(清单)" "${gpu_count:-}"   "GPU数量"    "颗"  0
+# 系统盘藏在 RAID 后面，看不到物理盘，只做记录
+report_row 2 "基础规格" "系统盘/本地盘" "${sysdisk:-N/A}" "${PL[系统盘描述]:-对照采购清单}" MANUAL \
+  "RAID 后面看不到物理盘，需人工核对"
 
 # ========================================================== §3 GPU 硬件验证
 mem_min="$(colN_num q_memory_total 2 | num_min)"

@@ -37,7 +37,7 @@ Boot menu (see `boot_configs/`):
 | `downloads/nvidia/` | Driver / DCGM / Fabric Manager offline debs (target install) |
 | `downloads/offline_deb_noble/` | CUDA runtime + NCCL (`runtime/`) and full rebuild toolchain (`rebuild/`) |
 | `downloads/iso/`, `downloads/source/` | Re-flash / recompile sources only (not used at acceptance time) |
-| `templates/` | Final result + onsite checklist templates |
+| `templates/` | Final result、现场核对表、**采购清单模板**（§2 自动核对用） |
 | `logs/`, `reports/`, `inventory/` | Output collected during acceptance |
 
 See `downloads/README.txt` for the target-vs-rebuild asset split.
