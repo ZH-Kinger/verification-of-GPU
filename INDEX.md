@@ -37,7 +37,7 @@ Boot menu (see `boot_configs/`):
 | `downloads/nvidia/` | Driver / DCGM / Fabric Manager offline debs (target install) |
 | `downloads/offline_deb_noble/` | CUDA runtime + NCCL (`runtime/`) and full rebuild toolchain (`rebuild/`) |
 | `downloads/iso/`, `downloads/source/` | Re-flash / recompile sources only (not used at acceptance time) |
-| `templates/` | Final result、现场核对表、**采购清单模板**（§2 自动核对用） |
+| `templates/` | Final result、现场核对表、**采购清单模板**（§2 自动核对用）、**供应商应答对照表** |
 | `logs/`, `reports/`, `inventory/` | Output collected during acceptance |
 
 See `downloads/README.txt` for the target-vs-rebuild asset split.
@@ -86,6 +86,13 @@ Each run writes a timestamped dir under `logs/` plus a pre-filled `final_result.
 | `install_offline_tools.sh` | ipmitool / ethtool / nvme-cli / openmpi（标准新增要求） |
 | `build_official_stress_tools.sh` | Recompile tools from source (fallback) |
 | `prepare_single_usb_minimal.ps1`, `verify_downloads.ps1` | Windows build-host scripts |
+
+## Procurement (采购阶段，先于验收)
+
+| File | Purpose |
+|---|---|
+| `docs/gpu_rental_rfp.md` | **算力租赁需求书（RFP）** —— 发给供应商的逐条需求与应答要求。附录 A 直接引用本仓库的验收阈值，做到"需求书写什么、到货就验什么"。 |
+| `templates/vendor_response_template.csv` | 供应商应答对照表（211 项，可多家并列比较；★ 为硬性否决项） |
 
 ## Integrity
 
