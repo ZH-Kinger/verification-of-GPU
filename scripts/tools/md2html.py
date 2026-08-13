@@ -3,23 +3,27 @@
 """Markdown 子集转 Word 友好的 HTML，供 LibreOffice 转 docx 用。
 支持：标题、段落、表格、有序与无序列表、围栏代码块、行内代码、加粗、分隔线。
 """
-import sys, re, html
+import sys, os, re, html
 
 CSS = """
 @page { size: A4; margin: 2.5cm 2cm; }
 body { font-family: "SimSun","宋体",serif; font-size: 11pt; line-height: 1.7; }
-h1 { font-family:"SimHei","黑体",sans-serif; font-size:20pt; text-align:center; margin:0 0 6pt; }
-h2 { font-family:"SimHei","黑体",sans-serif; font-size:15pt; margin:22pt 0 8pt;
-     page-break-before: always; page-break-after: avoid; }
+h1 { font-family:"SimHei","黑体",sans-serif; font-size:19pt; text-align:center; margin:0 0 10pt; }
+table.meta { width: 62%; margin: 0 auto 14pt; font-size: 10pt; }
+table.meta td { border: none; padding: 1pt 4pt; }
+table.meta td:first-child { font-family:"SimHei","黑体",sans-serif; width: 34%; }
+h2 { font-family:"SimHei","黑体",sans-serif; font-size:15pt; margin:20pt 0 8pt;
+     page-break-after: avoid; }
 h3 { font-family:"SimHei","黑体",sans-serif; font-size:13pt; margin:16pt 0 6pt; page-break-after: avoid; }
 h4 { font-family:"SimHei","黑体",sans-serif; font-size:11.5pt; margin:12pt 0 4pt; page-break-after: avoid; }
 p  { margin: 0 0 6pt; text-align: justify; }
+p.tocend { font-size: 1pt; color: #fff; margin: 0; }
 p.cap { font-family:"SimHei","黑体",sans-serif; font-size:10.5pt; margin:10pt 0 3pt; page-break-after: avoid; }
 table { border-collapse: collapse; width: 100%; font-size: 9.5pt; margin: 0 0 10pt;
         page-break-inside: auto; }
 tr { page-break-inside: avoid; }
-table.toc { margin-top: 4pt; }
-table.toc td { border: none; font-size: 9.5pt; padding: 1pt 2pt; }
+table.toc { margin-top: 3pt; }
+table.toc td { border: none; font-size: 9pt; padding: 0 2pt; line-height: 1.1; }
 table.toc td.t2 { font-family:"SimHei","黑体",sans-serif; width: 36%; }
 table.toc td.t3 { padding-left: 12pt; width: 36%; }
 table.toc td.pn { text-align: right; width: 6%; padding-right: 8pt; }
@@ -42,6 +46,11 @@ def inline(t):
 
 def main():
     src, dst = sys.argv[1], sys.argv[2]
+    # 可选：目录页码映射。首轮无映射时占位为 88，与两位页码等宽。
+    pages_map = {}
+    if len(sys.argv) > 3 and os.path.exists(sys.argv[3]):
+        import json
+        pages_map = json.load(open(sys.argv[3], encoding='utf-8'))
     lines = open(src, encoding='utf-8').read().split('\n')
     out, i, n = [], 0, len(lines)
     toc_items = []
@@ -62,9 +71,15 @@ def main():
                         if not t:
                             return '<td></td><td></td>'
                         return (f'<td class="t{lv}">{inline(t)}</td>'
-                                f'<td class="pn">@@P:{t}@@</td>')
+                                # 占位用两位数，与最终页码等宽，
+                                # 使两遍生成的版式一致，页码不会因目录长度变化而偏移
+                                f'<td class="pn" title="{html.escape(t)}">'
+                                f'{pages_map.get(t, "88")}</td>')
                     rows.append('<tr>' + cell(l1, t1) + cell(l2, t2) + '</tr>')
                 out.append('<table class="toc">' + ''.join(rows) + '</table>')
+                # 哨兵：标记目录结束位置。去掉章前分页后目录尾与正文首章同页，
+                # 按整页排除会漏掉该页上的标题，故改用位置而非页面粒度。
+                out.append('<p class="tocend">@@TOCEND@@</p>')
             else:
                 m2 = re.match(r'^(\s*)-\s+(.*)$', L)
                 if m2:
@@ -92,7 +107,8 @@ def main():
             rows = []
             while i < n and lines[i].lstrip().startswith('|'):
                 rows.append(cells(lines[i])); i += 1
-            t = ['<table><tr>' + ''.join(f'<th>{inline(c)}</th>' for c in hdr) + '</tr>']
+            cls = ' class="meta"' if (not out or all('<table' not in o for o in out)) and hdr == ['', ''] else ''
+            t = [f'<table{cls}>' + ('' if cls else '<tr>' + ''.join(f'<th>{inline(c)}</th>' for c in hdr) + '</tr>')]
             for r in rows:
                 r = (r + [''] * len(hdr))[:len(hdr)]
                 t.append('<tr>' + ''.join(f'<td>{inline(c)}</td>' for c in r) + '</tr>')
