@@ -8,9 +8,10 @@ import sys, os, re, html
 CSS = """
 @page { size: A4; margin: 2.2cm 1.9cm; }
 body { font-family: "SimSun","宋体",serif; font-size: 10pt; line-height: 1.45; }
-h1 { font-family:"SimHei","黑体",sans-serif; font-size:17pt; text-align:center; margin:0 0 10pt; }
-table.meta { width: 70%; margin: 40pt auto 0; font-size: 10.5pt; }
-table.meta td { border: none; padding: 1pt 4pt; }
+h1 { font-family:"SimHei","黑体",sans-serif; font-size:17pt; text-align:center;
+     margin:110pt 0 10pt; letter-spacing: 2pt; }
+table.meta { margin: 30pt auto 0; font-size: 10.5pt; }
+table.meta td { border: none; padding: 2.5pt 6pt; }
 table.meta td:first-child { font-family:"SimHei","黑体",sans-serif; width: 34%; }
 h2 { font-family:"SimHei","黑体",sans-serif; font-size:13.5pt; margin:16pt 0 6pt;
      page-break-after: avoid; }
@@ -122,7 +123,8 @@ def main():
             rows = []
             while i < n and lines[i].lstrip().startswith('|'):
                 rows.append(cells(lines[i])); i += 1
-            cls = ' class="meta"' if (not out or all('<table' not in o for o in out)) and hdr == ['', ''] else ''
+            is_meta = (not out or all('<table' not in o for o in out)) and hdr == ['', '']
+            cls = ' class="meta" align="center" border="0"' if is_meta else ''
             t = [f'<table{cls}>' + cap + ('' if cls else '<tr>' + ''.join(f'<th>{inline(c)}</th>' for c in hdr) + '</tr>')]
             for r in rows:
                 r = (r + [''] * len(hdr))[:len(hdr)]
