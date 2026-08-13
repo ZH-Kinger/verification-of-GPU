@@ -33,10 +33,20 @@ def page_of(pos):
             pg = p
     return pg
 
+def strip_prefix(k):
+    """去掉「第X章」「附录A」「1.2.3」一类编号前缀，只留标题正文。"""
+    return re.sub(r'^(第[一二三四五六七八九十]+章|附录[A-Z]|[\d.]+)', '', k)
+
 m, miss = {}, []
 for t in titles:
     key = re.sub(r'\s+', '', t)
     pos = joined.find(key, cut)
+    if pos < 0:
+        # pdftotext 的阅读顺序有时会把相邻表格的文字插进标题中间，
+        # 使整串匹配不到（如「附录A评审权重单机验收阈值」）。退化为只匹配标题正文。
+        body = strip_prefix(key)
+        if len(body) >= 4:
+            pos = joined.find(body, cut)
     if pos >= 0:
         m[t] = page_of(pos)
     else:

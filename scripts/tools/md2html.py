@@ -9,8 +9,7 @@ CSS = """
 @page { size: A4; margin: 2.2cm 1.9cm; }
 body { font-family: "SimSun","宋体",serif; font-size: 10pt; line-height: 1.45; }
 h1 { font-family:"SimHei","黑体",sans-serif; font-size:17pt; text-align:center; margin:0 0 10pt; }
-table.meta { width: 70%; margin: 40pt auto 0; font-size: 10.5pt;
-             page-break-after: always; }
+table.meta { width: 70%; margin: 40pt auto 0; font-size: 10.5pt; }
 table.meta td { border: none; padding: 1pt 4pt; }
 table.meta td:first-child { font-family:"SimHei","黑体",sans-serif; width: 34%; }
 h2 { font-family:"SimHei","黑体",sans-serif; font-size:13.5pt; margin:16pt 0 6pt;
@@ -112,7 +111,7 @@ def main():
                 out.append(f'<h{lv} class="pb">{inline(m.group(2))}</h{lv}>'); i += 1; continue
             if m.group(2).startswith('目　录'):
                 skip_toc = True
-                out.append(f'<h{lv}>{inline(m.group(2))}</h{lv}>'); i += 1; continue
+                out.append(f'<h{lv} class="pb">{inline(m.group(2))}</h{lv}>'); i += 1; continue
             out.append(f'<h{lv}>{inline(m.group(2))}</h{lv}>'); i += 1; continue
         if L.lstrip().startswith('|') and i + 1 < n and re.match(r'^\s*\|[\s:|-]+\|\s*$', lines[i+1]):
             cap = ''
