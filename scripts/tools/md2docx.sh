@@ -22,6 +22,7 @@ build() {   # build <是否清除哨兵>
   rm -f "$TMP/$BASE.docx" "$TMP/$BASE.pdf"
   "${LO[@]}" --infilter="HTML (StarWriter)" --convert-to "docx:MS Word 2007 XML" \
              --outdir "$TMP" "$TMP/$BASE.html" >/dev/null 2>&1
+  python3 "$D/keep_tables.py" "$TMP/$BASE.docx" >/dev/null
   python3 "$D/add_footer.py" "$TMP/$BASE.docx" >/dev/null
   "${LO[@]}" --convert-to pdf --outdir "$TMP" "$TMP/$BASE.docx" >/dev/null 2>&1
 }
