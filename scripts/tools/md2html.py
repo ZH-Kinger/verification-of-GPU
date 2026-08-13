@@ -7,25 +7,25 @@ import sys, os, re, html
 
 CSS = """
 @page { size: A4; margin: 2.2cm 1.9cm; }
-body { font-family: "SimSun","宋体",serif; font-size: 10.5pt; line-height: 1.45; }
-h1 { font-family:"SimHei","黑体",sans-serif; font-size:18pt; text-align:center; margin:0 0 10pt; }
-table.meta { width: 70%; margin: 40pt auto 0; font-size: 11pt;
+body { font-family: "SimSun","宋体",serif; font-size: 10pt; line-height: 1.45; }
+h1 { font-family:"SimHei","黑体",sans-serif; font-size:17pt; text-align:center; margin:0 0 10pt; }
+table.meta { width: 70%; margin: 40pt auto 0; font-size: 10.5pt;
              page-break-after: always; }
 table.meta td { border: none; padding: 1pt 4pt; }
 table.meta td:first-child { font-family:"SimHei","黑体",sans-serif; width: 34%; }
-h2 { font-family:"SimHei","黑体",sans-serif; font-size:14pt; margin:16pt 0 6pt;
+h2 { font-family:"SimHei","黑体",sans-serif; font-size:13.5pt; margin:16pt 0 6pt;
      page-break-after: avoid; }
-h3 { font-family:"SimHei","黑体",sans-serif; font-size:12pt; margin:12pt 0 4pt; page-break-after: avoid; }
-h4 { font-family:"SimHei","黑体",sans-serif; font-size:11pt; margin:9pt 0 3pt; page-break-after: avoid; }
+h3 { font-family:"SimHei","黑体",sans-serif; font-size:11.5pt; margin:12pt 0 4pt; page-break-after: avoid; }
+h4 { font-family:"SimHei","黑体",sans-serif; font-size:10.5pt; margin:9pt 0 3pt; page-break-after: avoid; }
 p  { margin: 0 0 4pt; text-align: justify; }
 p.tocend { font-size: 1pt; color: #fff; margin: 0; }
 h2.pb { page-break-before: always; margin-top: 0; }
 p.cap { font-family:"SimHei","黑体",sans-serif; font-size:10.5pt; margin:10pt 0 3pt; }
-caption { font-family:"SimHei","黑体",sans-serif; font-size:10pt; text-align:left;
+caption { font-family:"SimHei","黑体",sans-serif; font-size:9.5pt; text-align:left;
           padding: 8pt 0 3pt; caption-side: top; }
 /* 表格整体不拆页：表头留在上一页而正文另起一页是最常见的排版事故。
    超过一页的长表由渲染器自行拆分，此设置对其无效。 */
-table { border-collapse: collapse; width: 100%; font-size: 8.5pt; margin: 0 0 8pt;
+table { border-collapse: collapse; width: 100%; font-size: 8pt; margin: 0 0 8pt;
         page-break-inside: avoid; }
 tr { page-break-inside: avoid; }
 table.toc { margin-top: 3pt; }
@@ -35,7 +35,7 @@ table.toc td.t3 { padding-left: 12pt; width: 36%; }
 table.toc td.pn { text-align: right; width: 6%; padding-right: 8pt; }
 th, td { border: 0.5pt solid #000; padding: 2pt 4pt; vertical-align: top; line-height: 1.3; }
 th { background: #e8e8e8; font-family:"SimHei","黑体",sans-serif; }
-pre { font-family:"Consolas",monospace; font-size:9pt; background:#f5f5f5;
+pre { font-family:"Consolas",monospace; font-size:8.5pt; background:#f5f5f5;
       border:0.5pt solid #bbb; padding:6pt; white-space:pre-wrap; }
 code { font-family:"Consolas",monospace; font-size:10pt; }
 hr { border:0; border-top:0.5pt solid #999; margin:10pt 0; }
