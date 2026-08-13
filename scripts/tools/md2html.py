@@ -15,7 +15,14 @@ h3 { font-family:"SimHei","黑体",sans-serif; font-size:13pt; margin:16pt 0 6pt
 h4 { font-family:"SimHei","黑体",sans-serif; font-size:11.5pt; margin:12pt 0 4pt; page-break-after: avoid; }
 p  { margin: 0 0 6pt; text-align: justify; }
 p.cap { font-family:"SimHei","黑体",sans-serif; font-size:10.5pt; margin:10pt 0 3pt; page-break-after: avoid; }
-table { border-collapse: collapse; width: 100%; font-size: 9.5pt; margin: 0 0 10pt; }
+table { border-collapse: collapse; width: 100%; font-size: 9.5pt; margin: 0 0 10pt;
+        page-break-inside: auto; }
+tr { page-break-inside: avoid; }
+table.toc { margin-top: 4pt; }
+table.toc td { border: none; font-size: 9.5pt; padding: 1pt 2pt; }
+table.toc td.t2 { font-family:"SimHei","黑体",sans-serif; width: 36%; }
+table.toc td.t3 { padding-left: 12pt; width: 36%; }
+table.toc td.pn { text-align: right; width: 6%; padding-right: 8pt; }
 th, td { border: 0.5pt solid #000; padding: 3pt 5pt; vertical-align: top; }
 th { background: #e8e8e8; font-family:"SimHei","黑体",sans-serif; }
 pre { font-family:"Consolas",monospace; font-size:9.5pt; background:#f5f5f5;
@@ -37,14 +44,32 @@ def main():
     src, dst = sys.argv[1], sys.argv[2]
     lines = open(src, encoding='utf-8').read().split('\n')
     out, i, n = [], 0, len(lines)
+    toc_items = []
     skip_toc = False          # md 中的静态目录仅供 md 阅读，docx 用域生成，此处跳过
     while i < n:
         L = lines[i]
         if skip_toc:
             if L.strip() == '@@TOC@@':
                 skip_toc = False
+                # 双栏排布。单栏 53 条会占三页且末页仅数行；
+                # 段落加点线的方案因无制表位，点数难以对齐，故仍用表格但两条一行。
+                half = (len(toc_items) + 1) // 2
+                left, right = toc_items[:half], toc_items[half:]
+                right += [(0, '')] * (len(left) - len(right))
+                rows = []
+                for (l1, t1), (l2, t2) in zip(left, right):
+                    def cell(lv, t):
+                        if not t:
+                            return '<td></td><td></td>'
+                        return (f'<td class="t{lv}">{inline(t)}</td>'
+                                f'<td class="pn">@@P:{t}@@</td>')
+                    rows.append('<tr>' + cell(l1, t1) + cell(l2, t2) + '</tr>')
+                out.append('<table class="toc">' + ''.join(rows) + '</table>')
             else:
-                i += 1; continue
+                m2 = re.match(r'^(\s*)-\s+(.*)$', L)
+                if m2:
+                    toc_items.append((2 if not m2.group(1).strip('　') else 3, m2.group(2).strip()))
+            i += 1; continue
         if L.startswith('```'):
             buf = []; i += 1
             while i < n and not lines[i].startswith('```'):
