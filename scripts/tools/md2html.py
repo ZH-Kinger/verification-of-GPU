@@ -37,8 +37,14 @@ def main():
     src, dst = sys.argv[1], sys.argv[2]
     lines = open(src, encoding='utf-8').read().split('\n')
     out, i, n = [], 0, len(lines)
+    skip_toc = False          # md 中的静态目录仅供 md 阅读，docx 用域生成，此处跳过
     while i < n:
         L = lines[i]
+        if skip_toc:
+            if L.strip() == '@@TOC@@':
+                skip_toc = False
+            else:
+                i += 1; continue
         if L.startswith('```'):
             buf = []; i += 1
             while i < n and not lines[i].startswith('```'):
@@ -51,6 +57,9 @@ def main():
         m = re.match(r'^(#{1,4})\s+(.*)$', L)
         if m:
             lv = len(m.group(1))
+            if m.group(2).startswith('目　录'):
+                skip_toc = True
+                out.append(f'<h{lv}>{inline(m.group(2))}</h{lv}>'); i += 1; continue
             out.append(f'<h{lv}>{inline(m.group(2))}</h{lv}>'); i += 1; continue
         if L.lstrip().startswith('|') and i + 1 < n and re.match(r'^\s*\|[\s:|-]+\|\s*$', lines[i+1]):
             def cells(x): return [c.strip() for c in x.strip().strip('|').split('|')]
@@ -78,6 +87,8 @@ def main():
                 items.append(lines[i].strip()[2:]); i += 1
             out.append('<ul>' + ''.join(f'<li>{inline(x)}</li>' for x in items) + '</ul>')
             continue
+        if L.strip() == '@@TOC@@':
+            out.append('<p>@@TOC@@</p>'); i += 1; continue
         if not L.strip():
             i += 1; continue
         para = [L.strip()]; i += 1

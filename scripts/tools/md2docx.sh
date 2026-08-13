@@ -7,6 +7,7 @@ BASE="$(basename "${SRC%.md}")"
 TMP="$(mktemp -d)"
 python3 "$(dirname "$0")/md2html.py" "$SRC" "$TMP/$BASE.html"
 soffice --headless --infilter="HTML (StarWriter)" --convert-to "docx:MS Word 2007 XML" --outdir "$TMP" "$TMP/$BASE.html" >/dev/null 2>&1
+python3 "$(dirname "$0")/inject_toc.py" "$TMP/$BASE.docx" || true
 mv "$TMP/$BASE.docx" "$OUTDIR/$BASE.docx"
 rm -rf "$TMP"
 ls -lh "$OUTDIR/$BASE.docx"
