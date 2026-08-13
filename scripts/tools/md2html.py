@@ -9,7 +9,8 @@ CSS = """
 @page { size: A4; margin: 2.5cm 2cm; }
 body { font-family: "SimSun","宋体",serif; font-size: 11pt; line-height: 1.7; }
 h1 { font-family:"SimHei","黑体",sans-serif; font-size:19pt; text-align:center; margin:0 0 10pt; }
-table.meta { width: 62%; margin: 0 auto 14pt; font-size: 10pt; }
+table.meta { width: 70%; margin: 40pt auto 0; font-size: 11pt;
+             page-break-after: always; }
 table.meta td { border: none; padding: 1pt 4pt; }
 table.meta td:first-child { font-family:"SimHei","黑体",sans-serif; width: 34%; }
 h2 { font-family:"SimHei","黑体",sans-serif; font-size:15pt; margin:20pt 0 8pt;
@@ -18,9 +19,14 @@ h3 { font-family:"SimHei","黑体",sans-serif; font-size:13pt; margin:16pt 0 6pt
 h4 { font-family:"SimHei","黑体",sans-serif; font-size:11.5pt; margin:12pt 0 4pt; page-break-after: avoid; }
 p  { margin: 0 0 6pt; text-align: justify; }
 p.tocend { font-size: 1pt; color: #fff; margin: 0; }
-p.cap { font-family:"SimHei","黑体",sans-serif; font-size:10.5pt; margin:10pt 0 3pt; page-break-after: avoid; }
-table { border-collapse: collapse; width: 100%; font-size: 9.5pt; margin: 0 0 10pt;
-        page-break-inside: auto; }
+h2.pb { page-break-before: always; margin-top: 0; }
+p.cap { font-family:"SimHei","黑体",sans-serif; font-size:10.5pt; margin:10pt 0 3pt; }
+caption { font-family:"SimHei","黑体",sans-serif; font-size:10.5pt; text-align:left;
+          padding: 8pt 0 3pt; caption-side: top; }
+/* 表格整体不拆页：表头留在上一页而正文另起一页是最常见的排版事故。
+   超过一页的长表由渲染器自行拆分，此设置对其无效。 */
+table { border-collapse: collapse; width: 100%; font-size: 9pt; margin: 0 0 10pt;
+        page-break-inside: avoid; }
 tr { page-break-inside: avoid; }
 table.toc { margin-top: 3pt; }
 table.toc td { border: none; font-size: 9pt; padding: 0 2pt; line-height: 1.1; }
@@ -54,6 +60,7 @@ def main():
     lines = open(src, encoding='utf-8').read().split('\n')
     out, i, n = [], 0, len(lines)
     toc_items = []
+    pending_break = False
     skip_toc = False          # md 中的静态目录仅供 md 阅读，docx 用域生成，此处跳过
     while i < n:
         L = lines[i]
@@ -80,6 +87,9 @@ def main():
                 # 哨兵：标记目录结束位置。去掉章前分页后目录尾与正文首章同页，
                 # 按整页排除会漏掉该页上的标题，故改用位置而非页面粒度。
                 out.append('<p class="tocend">@@TOCEND@@</p>')
+                # 空段落上的 page-break-after 会被 LibreOffice 忽略，
+                # 故改由目录之后的首个章标题承担分页
+                pending_break = True
             else:
                 m2 = re.match(r'^(\s*)-\s+(.*)$', L)
                 if m2:
@@ -97,18 +107,24 @@ def main():
         m = re.match(r'^(#{1,4})\s+(.*)$', L)
         if m:
             lv = len(m.group(1))
+            if pending_break:
+                pending_break = False
+                out.append(f'<h{lv} class="pb">{inline(m.group(2))}</h{lv}>'); i += 1; continue
             if m.group(2).startswith('目　录'):
                 skip_toc = True
                 out.append(f'<h{lv}>{inline(m.group(2))}</h{lv}>'); i += 1; continue
             out.append(f'<h{lv}>{inline(m.group(2))}</h{lv}>'); i += 1; continue
         if L.lstrip().startswith('|') and i + 1 < n and re.match(r'^\s*\|[\s:|-]+\|\s*$', lines[i+1]):
+            cap = ''
+            if out and out[-1].startswith('<p class="cap">'):
+                cap = '<caption>' + out.pop()[len('<p class="cap">'):-len('</p>')] + '</caption>'
             def cells(x): return [c.strip() for c in x.strip().strip('|').split('|')]
             hdr = cells(L); i += 2
             rows = []
             while i < n and lines[i].lstrip().startswith('|'):
                 rows.append(cells(lines[i])); i += 1
             cls = ' class="meta"' if (not out or all('<table' not in o for o in out)) and hdr == ['', ''] else ''
-            t = [f'<table{cls}>' + ('' if cls else '<tr>' + ''.join(f'<th>{inline(c)}</th>' for c in hdr) + '</tr>')]
+            t = [f'<table{cls}>' + cap + ('' if cls else '<tr>' + ''.join(f'<th>{inline(c)}</th>' for c in hdr) + '</tr>')]
             for r in rows:
                 r = (r + [''] * len(hdr))[:len(hdr)]
                 t.append('<tr>' + ''.join(f'<td>{inline(c)}</td>' for c in r) + '</tr>')
