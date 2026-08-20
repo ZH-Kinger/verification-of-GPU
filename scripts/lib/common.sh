@@ -30,6 +30,58 @@ export LANG=C
 
 # ------------------------------------------------------------------ profile
 
+# 按实际 GPU 型号自动挑 profile。
+#
+# 为什么要有：原来默认写死 b300_8gpu，现场拿到 H200 的机器忘了带参数，
+# 就会用 B300 的阈值去判 —— TDP 1100W vs 700W、AllReduce 800 vs 350，
+# 全线 FAIL，人还会以为是机器坏了。
+#
+# 匹配不上或匹配到多个时**不猜**，返回非 0 让调用方停下来问。
+# 默认一个错的 profile 比没有默认更危险：判定表会照常出，只是全错。
+detect_profile() {
+  local names model matched=() n pat
+  command -v nvidia-smi >/dev/null 2>&1 || { echo "[common] 无 nvidia-smi，无法自动识别机型" >&2; return 1; }
+  model="$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | sed -n '1p')"
+  [ -n "$model" ] || { echo "[common] nvidia-smi 未返回 GPU 型号（驱动未加载？）" >&2; return 1; }
+
+  for n in "$ACC_BASE_DIR"/profiles/*.env; do
+    [ -f "$n" ] || continue
+    # 只取模式行，不 source 整个 profile —— 探测阶段不该污染当前 shell 的变量
+    pat="$(sed -n 's/^EXPECTED_GPU_MODEL_PATTERN=["'"'"']\{0,1\}\([^"'"'"']*\)["'"'"']\{0,1\}.*/\1/p' "$n" | head -n1)"
+    [ -n "$pat" ] || continue
+    if printf '%s' "$model" | grep -Eqi "$pat"; then
+      matched+=("$(basename "$n" .env)")
+    fi
+  done
+
+  names="$(printf '%s ' "${matched[@]:-}")"
+  case "${#matched[@]}" in
+    1) echo "${matched[0]}"; return 0 ;;
+    0) echo "[common] GPU 型号「$model」没有匹配的 profile；请显式指定" >&2
+       echo "[common] 可选: $(ls "$ACC_BASE_DIR/profiles" 2>/dev/null | sed 's/\.env$//' | tr '\n' ' ')" >&2
+       return 1 ;;
+    *) echo "[common] GPU 型号「$model」同时匹配多个 profile：$names —— 请显式指定" >&2
+       return 1 ;;
+  esac
+}
+
+# 解析 profile：显式指定优先，其次自动识别，都不行才报错。
+# 自动识别成功时把依据打出来，让人能核对"它凭什么选了这个"。
+resolve_profile() {
+  local explicit="${1:-}"
+  if [ -n "$explicit" ]; then
+    printf '%s' "$explicit"
+    return 0
+  fi
+  local auto
+  if auto="$(detect_profile)"; then
+    echo "[common] 自动识别机型 -> profile: $auto" >&2
+    printf '%s' "$auto"
+    return 0
+  fi
+  return 1
+}
+
 load_profile() {
   local name="${1:-b300_8gpu}"
   local file="$ACC_BASE_DIR/profiles/${name}.env"

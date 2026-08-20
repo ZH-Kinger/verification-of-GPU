@@ -548,6 +548,66 @@ else
   report_row 4 "NVLink 拓扑" "拓扑验证" "N/A" "全互联 $NVLINK_TOPO_TAG" SKIP
 fi
 
+# GPU 与配对网卡的亲和性。rail-optimized 设计里 GPU_i 应当与 NIC_i 同在一个 PCIe
+# 域（PIX/PXB）；落到 NODE/PHB/SYS 说明 GDR 流量要绕 Host Bridge 甚至 CPU 间互连
+# （UPI/QPI），带宽掉三成以上，而 ibstat 与 nvidia-smi 全都正常，只有本项能看出来。
+# 常见成因：网卡插错槽位、riser 用错、BIOS PCIe 通道分配不对。
+if cap_exists nvidia_smi_topo; then
+  aff_ok="${GPU_NIC_AFFINITY_OK:-}"
+  if [ -z "$aff_ok" ]; then
+    report_row 4 "GPU-NIC 亲和" "GDR 路径" "N/A" "配对网卡为 PIX/PXB" SKIP \
+      "profile 缺 GPU_NIC_AFFINITY_OK"
+  else
+    aff_out="$(cap nvidia_smi_topo | awk -v ok="$aff_ok" '
+      # nvidia-smi 会给表头加 ANSI 下划线转义，捕获到文件里也在，先剥掉再匹配。
+      { gsub(/\033\[[0-9;]*m/, "") }
+      # 表头行：只有它同时含 GPU0 与 NIC0。
+      # 列对齐：表头通常以分隔符开头（$1 为空），此时表头与数据行列号天然一致；
+      # 少数版本表头首字段直接是 GPU0，这时数据行多了一个行标签字段，需 +1。
+      /GPU0/ && /NIC0/ && !hdr {
+        off = ($1 == "" ? 0 : 1)
+        for (i = 1; i <= NF; i++) if ($i ~ /^NIC[0-9]+$/) { n = substr($i, 4) + 0; nic[n] = i + off }
+        hdr = 1; next
+      }
+      hdr && /^GPU[0-9]+/ {
+        g = substr($1, 4) + 0
+        gpus++
+        col = nic[g]
+        if (col == 0 || col > NF) { unpaired++; next }
+        v = $col
+        gsub(/^[ \t]+|[ \t]+$/, "", v)
+        seen[v]++
+        good = 0
+        split(ok, allow, " ")
+        for (k in allow) if (v == allow[k]) good = 1
+        if (good) pass++; else { bad++; badlist = badlist (badlist ? "," : "") "GPU" g "=" v }
+      }
+      END {
+        printf "%d\t%d\t%d\t%d\t%s", gpus + 0, pass + 0, bad + 0, unpaired + 0, badlist
+      }' FS='\t')"
+    IFS=$'\t' read -r aff_total aff_pass aff_bad aff_unpaired aff_list <<< "$aff_out"
+    if [ "${aff_total:-0}" -eq 0 ]; then
+      report_row 4 "GPU-NIC 亲和" "GDR 路径" "N/A" "配对网卡为 ${aff_ok// //}" SKIP \
+        "topo -m 无 NIC 列（未装 RDMA 网卡或驱动未识别）"
+    elif [ "${aff_unpaired:-0}" -gt 0 ]; then
+      # 网卡数少于 GPU 数：rail-optimized 不成立，必须列出来而不是按通过处理
+      report_row 4 "GPU-NIC 亲和" "GDR 路径" \
+        "${aff_total} 个 GPU 中 ${aff_unpaired} 个找不到配对网卡" \
+        "每个 GPU 配一张网卡，且为 ${aff_ok// //}" FAIL "网卡数不足或槽位错配"
+    elif [ "${aff_bad:-0}" -eq 0 ]; then
+      report_row 4 "GPU-NIC 亲和" "GDR 路径" \
+        "${aff_pass}/${aff_total} 个 GPU 与配对网卡同 PCIe 域（${aff_ok// //}）" \
+        "全部为 ${aff_ok// //}" PASS
+    else
+      report_row 4 "GPU-NIC 亲和" "GDR 路径" \
+        "${aff_pass}/${aff_total} 个合格，${aff_bad} 个跨域：${aff_list}" \
+        "全部为 ${aff_ok// //}" FAIL "GDR 需绕 Host Bridge/UPI，ibstat 看不出来"
+    fi
+  fi
+else
+  report_row 4 "GPU-NIC 亲和" "GDR 路径" "N/A" "配对网卡为 PIX/PXB" SKIP "未采集 topo -m"
+fi
+
 if cap_exists nvlink_status; then
   active_links="$(cap nvlink_status | grep -cE '^[[:space:]]*Link [0-9]+:.*GB/s')"
   inactive="$(cap nvlink_status | grep -ciE 'inactive|degraded')"
@@ -657,15 +717,22 @@ if [ "${REQUIRE_NVIDIA_PEERMEM:-1}" = "1" ]; then
   fi
 fi
 
-fm_ver="$(cap fm_version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1)"
+# NVIDIA 要求 Fabric Manager 与驱动版本**完全一致**，不是主版本一致：
+# 550.127.05 的驱动配 550.54.15 的 FM，服务会拒绝启动，NVLink 多卡通信随之异常。
+# 原来只比 `${ver%%.*}`（主版本）会把这种组合判成 PASS —— 现场表现是 §4 的
+# 「FM 状态」变红而 §7 这行还是绿的，排查方向会被带偏到服务日志上。
+# 版本位数不做归一：FM 与驱动本就该给出同一个字符串，位数不同本身就是不一致。
+fm_ver="$(cap fm_version | grep -oE '[0-9]+(\.[0-9]+)+' | head -n1)"
 if [ -n "$fm_ver" ] && [ -n "$drv_one" ]; then
-  if [ "${fm_ver%%.*}" = "${drv_one%%.*}" ]; then
-    report_row 7 "Fabric Manager" "FM 版本与状态" "FM $fm_ver / 驱动 $drv_one" "与驱动版本匹配，服务 Active" PASS
+  if [ "$fm_ver" = "$drv_one" ]; then
+    report_row 7 "Fabric Manager" "FM 版本与状态" "FM $fm_ver / 驱动 $drv_one（完全一致）" \
+      "与驱动版本完全一致，服务 Active" PASS
   else
-    report_row 7 "Fabric Manager" "FM 版本与状态" "FM $fm_ver / 驱动 $drv_one" "与驱动版本匹配" FAIL "主版本不一致"
+    report_row 7 "Fabric Manager" "FM 版本与状态" "FM $fm_ver / 驱动 $drv_one" \
+      "与驱动版本完全一致" FAIL "版本不一致：FM 会拒绝启动，NVLink 多卡通信异常"
   fi
 else
-  report_row 7 "Fabric Manager" "FM 版本与状态" "N/A" "与驱动版本匹配，服务 Active" SKIP
+  report_row 7 "Fabric Manager" "FM 版本与状态" "N/A" "与驱动版本完全一致，服务 Active" SKIP
 fi
 
 if [ "${REQUIRE_GDRCOPY:-0}" = "1" ]; then

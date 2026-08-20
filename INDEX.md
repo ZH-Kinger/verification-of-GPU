@@ -75,6 +75,9 @@ Each run writes a timestamped dir under `logs/` plus a pre-filled `final_result.
 | `cluster/setup_ssh.sh` | 多机免密 + 驱动版本一致性核对 |
 | `cluster/roce_check.sh` | §5 RoCE v2 检查与打流 |
 | `cluster/nccl_scale.sh` | §6 跨节点 NCCL 2/4/8/16 节点扫描 |
+| `scripts/cluster/run_cluster.sh` | **多机一键入口**：串起 §5 §6 §6b，支持 `--dry-run` / `--check-env` / 断点续跑 |
+| `scripts/cluster/topo_discover.sh` | 生成 `topology.tsv`（IB=iblinkinfo / RoCE=LLDP / 主机名兜底）|
+| `scripts/cluster/straggler_check.sh` | §6b 慢节点体检，拓扑感知配对，出 `straggler.json` |
 | `cluster/check_cluster.sh` | 多机判定 → `cluster_report.tsv` / `.txt` |
 | `lib/common.sh` | 共用：profile 加载、阈值断言、报告输出、输出解析 |
 | `offline_gpu_acceptance_collect.sh` | Low-level log/diag collector (v1.0 path) |

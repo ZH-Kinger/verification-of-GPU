@@ -31,8 +31,10 @@
 #         sudo bash scripts/run_acceptance.sh soak <log_dir> [profile]
 #       跑完自动重新判定，把 §8 的结果并入同一张表。
 #
-# profile: b300_8gpu（默认）或 h200_8gpu。不同机型的显存/功耗/带宽阈值和
-#          驱动/CUDA/NCCL/DCGM 版本要求都不同，全部由 profile 决定。
+# profile: 不填则按 nvidia-smi 报的 GPU 型号自动识别（b300_8gpu / h200_8gpu）。
+#          识别不出或同时匹配多个时会停下来要求显式指定 —— 不会默认套一个。
+#          不同机型的显存/功耗/带宽阈值和驱动/CUDA/NCCL/DCGM 版本要求都不同，
+#          用错 profile 会让好机器全线 FAIL，所以宁可停下来问。
 #
 # 退出码（批量验收时按它判断这台机器过没过）：
 #   0  判定 PASS
@@ -134,7 +136,11 @@ case "$MODE" in
 
   standard)
     # 阶段二：按甲方《验收标准》表逐项采集并自动判定（单机离线压测）。
-    PROFILE_NAME_ARG="${2:-${PROFILE:-b300_8gpu}}"
+    if ! PROFILE_NAME_ARG="$(resolve_profile "${2:-${PROFILE:-}}")"; then
+      echo "[run_acceptance] 无法确定机型档案。显式指定：" >&2
+      echo "  sudo bash scripts/run_acceptance.sh standard <profile>" >&2
+      exit 2
+    fi
     log "阶段二 — 单机离线压测，profile=$PROFILE_NAME_ARG"
 
     log "1/3 环境预检"
@@ -161,7 +167,18 @@ case "$MODE" in
 
   soak)
     SOAK_TARGET="${2:-}"
-    PROFILE_NAME_ARG="${3:-${PROFILE:-b300_8gpu}}"
+    # soak 复用 collect 时的 profile：日志目录里存了当时的 profile.env 快照，
+    # 换 profile 复判会得出与前半程不一致的结论。
+    if [ -z "${3:-}" ] && [ -f "$2/profile.env" ]; then
+      PROFILE_NAME_ARG="$(sed -n 's/^ACC_PROFILE_NAME=//p' "$2/profile.env" 2>/dev/null | head -n1)"
+    fi
+    if [ -z "${PROFILE_NAME_ARG:-}" ]; then
+      if ! PROFILE_NAME_ARG="$(resolve_profile "${3:-${PROFILE:-}}")"; then
+        echo "[run_acceptance] 无法确定机型档案，请显式指定：" >&2
+        echo "  sudo bash scripts/run_acceptance.sh soak <log_dir> <profile>" >&2
+        exit 2
+      fi
+    fi
     if [ -z "$SOAK_TARGET" ] || [ ! -d "$SOAK_TARGET" ]; then
       log "用法: sudo bash scripts/run_acceptance.sh soak <log_dir> [profile]"
       log "      <log_dir> 用 standard 模式生成的那个目录。"

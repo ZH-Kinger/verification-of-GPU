@@ -34,6 +34,17 @@ for f in "$BASE_DIR"/scripts/*.sh "$BASE_DIR"/scripts/lib/*.sh "$BASE_DIR"/scrip
 done
 ok "$n_ok 个脚本语法通过"
 
+n_py=0
+for f in "$BASE_DIR"/scripts/cluster/*.py "$TEST_DIR"/*.py; do
+  [ -f "$f" ] || continue
+  if python3 -c "import ast,sys; ast.parse(open(sys.argv[1],encoding='utf-8').read())" "$f" 2>/dev/null; then
+    n_py=$((n_py + 1))
+  else
+    bad "$(basename "$f") 语法错误"
+  fi
+done
+[ "$n_py" -gt 0 ] && ok "$n_py 个 Python 模块语法通过"
+
 # ==================================================== 2. 单机达标输入
 echo
 echo "== 2. 单机判定（达标输入，b300_8gpu）=="
@@ -59,6 +70,8 @@ expect_in "$out" "采集权限"        PASS   # root 采集，证据完整
 expect_in "$out" "GPU 数量"        PASS   # nvidia-smi -L 计数
 expect_in "$out" "系统内存"        PASS   # free -b -> GiB
 expect_in "$out" "风扇状态"        PASS
+expect_in "$out" "GDR 路径"        PASS   # GPU_i 与配对 NIC_i 同 PCIe 域（PIX/PXB）
+expect_in "$out" "FM 版本与状态"   PASS   # FM 与驱动版本须完全一致，不是主版本一致
 expect_in "$out" "内存识别率"      PASS   # free 实测 / dmidecode 已装，不依赖写死容量
 expect_in "$out" "内存条一致性"    PASS   # 分隔符不能用 "/"：频率串本身含 "MT/s"
 expect_in "$out" "内存压力测试"    PASS   # 硬件错误要取 "Found N" 的 N，不是数行数   # ipmitool 状态在第 4 列，不是第 3 列
@@ -127,6 +140,10 @@ m_modprobe()   { echo "options nvidia" > "$1/modprobe_conf.txt"; }              
 m_fm_down()    { echo "inactive" > "$1/fm_is_active.txt"; }
 m_p2p_lat()    { sed -i 's/3\.30/7.80/' "$1/p2p_bw_lat.txt"; }                         # P2P 延迟 7.8us
 m_topo()       { sed -i '3s/NV18/NV9/2' "$1/nvidia_smi_topo.txt"; }                    # 拓扑降链
+m_gpu_nic()    { sed -i '4s/\tPIX\t/\tSYS\t/' "$1/nvidia_smi_topo.txt"; }              # GPU2 配对网卡跨 NUMA
+# FM 与驱动只有主版本相同：NVIDIA 要求完全一致，否则 FM 拒绝启动、NVLink 通信异常。
+# 只比主版本的旧逻辑会把这种组合判成 PASS。
+m_fm_minor()   { echo "nv-fabricmanager version 610.32.03" > "$1/fm_version.txt"; }
 # 连通性矩阵第 3 行是 GPU0 那行，把它最后一个非对角单元格改成 0 = P2P 不通。
 # 这条同时守住一个坑：判定必须做数值比较，不能拿 num_min 的输出做字符串比对
 # （它按值输出 "1" 或 "1.00"，字符串比对会静默失效）。
@@ -180,6 +197,8 @@ mutate_expect "缺 §7 驱动参数"      "内核模块参数"    m_modprobe
 mutate_expect "Fabric Manager 未运行" "FM 状态"       m_fm_down
 mutate_expect "P2P 延迟 7.8us"      "P2P 延迟"        m_p2p_lat
 mutate_expect "NVLink 拓扑降链"     "拓扑验证"        m_topo
+mutate_expect "GPU 与配对网卡跨 NUMA（GDR 绕 UPI，ibstat 看不出来）" "GDR 路径" m_gpu_nic
+mutate_expect "FM 与驱动仅主版本一致（须完全一致）" "FM 版本与状态" m_fm_minor
 mutate_expect "P2P 有一对不通"      "P2P Access"      m_p2p_access
 mutate_expect "单向 P2P 带宽不达标" "单向 P2P 带宽"   m_p2p_bw
 mutate_expect "单卡显存不足"        "单卡显存"        m_mem
@@ -648,6 +667,164 @@ else
     bad "长稳未产出 samples.csv / 增量快照"
   fi
 fi
+
+# ============================================ 9. 多机拓扑感知（无需 GPU/网络）
+echo
+echo "== 9. 多机慢节点体检：拓扑与判定 =="
+for t in test_cluster_topology test_straggler_judge; do
+  f="$TEST_DIR/$t.py"
+  [ -f "$f" ] || { bad "$t.py 缺失"; continue; }
+  out="$(python3 "$f" 2>&1)"
+  if [ $? -eq 0 ]; then
+    ok "$t：$(printf '%s' "$out" | sed -n 's/^Ran \([0-9]*\) tests.*/\1/p') 项通过"
+  else
+    bad "$t 失败"
+    printf '%s\n' "$out" | tail -15
+  fi
+done
+
+# --- 9b. straggler.json 接入判定表：五种情形 ---
+CCDIR="$(mktemp -d)"; mkdir -p "$CCDIR/cluster"
+mk_strag() {  # <clean|slow> <组数>
+  python3 - "$1" "$2" "$CCDIR/cluster/straggler.json" <<'PYEOF'
+import json, sys
+slow = sys.argv[1] == "slow"; grp = int(sys.argv[2])
+gpus = [{"rank": i, "host": f"node{i//8+1:02d}", "slow": False,
+         "compute_ratio": 1.0, "ring_ratio": 1.0} for i in range(16)]
+nodes = [{"node": i, "host": f"node{i+1:02d}", "group": f"leaf{i%grp}",
+          "classes": {"intra": {"slow": False}}} for i in range(2)]
+if slow:
+    gpus[9]["slow"] = True; gpus[9]["attribution"] = "降频：硬件温度墙"
+    nodes[1]["classes"]["intra"]["slow"] = True
+json.dump({"has_straggler": slow, "gpus": gpus, "nodes": nodes,
+           "groups": [f"leaf{i}" for i in range(grp)], "min_perf_ratio": 0.8},
+          open(sys.argv[3], "w"))
+PYEOF
+}
+cc_verdict() {  # <测试项> -> 判定
+  awk -F'\t' -v k="$1" '$3==k{print $8}' "$CCDIR/cluster_report.tsv" | head -1
+}
+cc_run() { bash "$BASE_DIR/scripts/cluster/check_cluster.sh" "$CCDIR" b300_8gpu >/dev/null 2>&1; }
+cc_case() {  # <说明> <同批均一性期望> <拓扑分组期望>
+  local desc="$1" w1="$2" w2="$3"
+  local g1 g2; g1="$(cc_verdict 同批均一性)"; g2="$(cc_verdict 拓扑分组)"
+  if [ "$g1" = "$w1" ] && [ "$g2" = "$w2" ]; then ok "$desc（$g1 / $g2）"
+  else bad "$desc 期望 $w1/$w2，实际 $g1/$g2"; fi
+}
+
+rm -f "$CCDIR/cluster/straggler.json"; cc_run
+cc_case "未跑体检 -> 两行都 SKIP（工具没跑绝不能读成通过）" SKIP SKIP
+mk_strag clean 2; cc_run
+cc_case "干净结果 + 2 个拓扑组 -> PASS" PASS PASS
+mk_strag slow 2; cc_run
+cc_case "有慢节点 -> 均一性 FAIL" FAIL PASS
+if grep -q '降频：硬件温度墙' "$CCDIR/cluster/straggler_attribution.txt" 2>/dev/null; then
+  ok "慢节点归因写入 straggler_attribution.txt"
+else
+  bad "慢节点归因未落盘"
+fi
+if awk -F'\t' '$3=="同批均一性"{print $5}' "$CCDIR/cluster_report.tsv" | grep -q '1/16'; then
+  ok "实测值是具体数字（1/16 个 GPU），不是 yes/no"
+else
+  bad "实测值未给出具体数字"
+fi
+mk_strag clean 1; cc_run
+cc_case "只有 1 个拓扑组 -> 标 MANUAL 提示先跑 topo_discover" PASS MANUAL
+echo '{bad' > "$CCDIR/cluster/straggler.json"; cc_run
+cc_case "json 损坏 -> 两行都 SKIP，不能少一行" SKIP SKIP
+rm -rf "$CCDIR"
+
+# --- 9c. topo_discover 输出的局限说明必须在，且文件仍可被解析 ---
+TPDIR="$(mktemp -d)"
+printf 'gpu-pod1-n01 slots=8\ngpu-pod1-n02 slots=8\ngpu-pod2-n01 slots=8\n' > "$TPDIR/hosts"
+bash "$BASE_DIR/scripts/cluster/topo_discover.sh" "$TPDIR" "$TPDIR/hosts" >/dev/null 2>&1
+TP="$TPDIR/cluster/topology.tsv"
+if [ -s "$TP" ]; then
+  miss=0
+  # 这三条局限一旦被人顺手删掉，现场就会拿一层拓扑当两层用、拿代理指标当结论用
+  grep -q '分不出' "$TP" || { bad "topology.tsv 缺少「分不出 spine 挂接关系」的说明"; miss=1; }
+  grep -q '只能证伪' "$TP" || { bad "topology.tsv 缺少「收敛比只能证伪不能证实」的说明"; miss=1; }
+  grep -q '按主机名猜的' "$TP" || { bad "topology.tsv 缺少「hostname:regex 是猜的」的说明"; miss=1; }
+  [ "$miss" = 0 ] && ok "topology.tsv 写明了三条局限（层级/证伪/猜测来源）"
+  # 文件头加长之后仍必须能被 parse_topology 正确读出，否则说明注释格式破坏了解析
+  if python3 -c "
+import sys
+sys.path.insert(0, '$BASE_DIR/scripts/cluster')
+import cluster_topology as ct
+t = ct.parse_topology(open('$TP', encoding='utf-8').read())
+assert t == {'gpu-pod1-n01': 'pod1', 'gpu-pod1-n02': 'pod1', 'gpu-pod2-n01': 'pod2'}, t
+assert sorted({c for c, _s, _p in ct.build_pairings(sorted(t), t)}) == ['inter', 'intra']
+" 2>/dev/null; then
+    ok "扩充后的文件头不影响解析，同组/跨组配对均生成"
+  else
+    bad "topology.tsv 加注释后 parse_topology 解析失败"
+  fi
+else
+  bad "topo_discover.sh 未生成 topology.tsv"
+fi
+rm -rf "$TPDIR"
+
+# --- 9d. profile 自动识别：认得出、认不出时不猜 ---
+PFDIR="$(mktemp -d)"; mkdir -p "$PFDIR/bin"
+mk_smi() {  # <型号>
+  printf '#!/bin/sh\necho "%s"\n' "$1" > "$PFDIR/bin/nvidia-smi"
+  chmod 755 "$PFDIR/bin/nvidia-smi"
+}
+pf_detect() { PATH="$PFDIR/bin:$PATH" bash -c '
+  ACC_BASE_DIR="'"$BASE_DIR"'"; . "$ACC_BASE_DIR/scripts/lib/common.sh"; detect_profile' 2>/dev/null; }
+
+mk_smi "NVIDIA H200"
+[ "$(pf_detect)" = h200_8gpu ] && ok "H200 -> h200_8gpu" || bad "H200 未识别为 h200_8gpu（实得 $(pf_detect)）"
+mk_smi "NVIDIA B300"
+[ "$(pf_detect)" = b300_8gpu ] && ok "B300 -> b300_8gpu" || bad "B300 未识别为 b300_8gpu"
+mk_smi "NVIDIA GB300"
+[ "$(pf_detect)" = b300_8gpu ] && ok "GB300 -> b300_8gpu" || bad "GB300 未识别为 b300_8gpu"
+# 认不出时必须拒绝，而不是默认套一个 —— 用错 profile 会让好机器全线 FAIL
+mk_smi "NVIDIA GeForce RTX 5060 Ti"
+if PATH="$PFDIR/bin:$PATH" bash -c '
+  ACC_BASE_DIR="'"$BASE_DIR"'"; . "$ACC_BASE_DIR/scripts/lib/common.sh"; detect_profile' >/dev/null 2>&1; then
+  bad "消费级卡不应被识别成任何数据中心 profile"
+else
+  ok "认不出的型号拒绝猜测（不默认套 b300）"
+fi
+printf '#!/bin/sh\nexit 1\n' > "$PFDIR/bin/nvidia-smi"; chmod 755 "$PFDIR/bin/nvidia-smi"
+if PATH="$PFDIR/bin:$PATH" bash -c '
+  ACC_BASE_DIR="'"$BASE_DIR"'"; . "$ACC_BASE_DIR/scripts/lib/common.sh"; detect_profile' >/dev/null 2>&1; then
+  bad "nvidia-smi 失败时不应返回成功"
+else
+  ok "驱动未加载时拒绝猜测"
+fi
+rm -rf "$PFDIR"
+
+# --- 9e. 多机一键入口：dry-run 与守卫 ---
+RCDIR="$(mktemp -d)"
+printf 'node01 slots=8\nnode02 slots=8\nnode03 slots=8\n' > "$RCDIR/hosts"
+rc_out="$(CLUSTER_LOG_DIR=$RCDIR/logs bash "$BASE_DIR/scripts/cluster/run_cluster.sh" \
+  --dry-run "$RCDIR/hosts" b300_8gpu 2>&1)"
+if printf '%s' "$rc_out" | grep -q '剩余合计约'; then
+  ok "run_cluster --dry-run 列出阶段与预计耗时（现场靠它排值班）"
+else
+  bad "run_cluster --dry-run 未给出耗时汇总"
+fi
+# 已完成的阶段要从剩余耗时里扣掉，否则断点续跑时预估是错的
+mkdir -p "$RCDIR/logs/.cluster-state"; touch "$RCDIR/logs/.cluster-state/nccl.done"
+rc_out2="$(CLUSTER_LOG_DIR=$RCDIR/logs bash "$BASE_DIR/scripts/cluster/run_cluster.sh" \
+  --dry-run "$RCDIR/hosts" b300_8gpu 2>&1)"
+t1="$(printf '%s' "$rc_out"  | sed -n 's/.*剩余合计约 \([0-9]*\) 分钟.*/\1/p')"
+t2="$(printf '%s' "$rc_out2" | sed -n 's/.*剩余合计约 \([0-9]*\) 分钟.*/\1/p')"
+if [ -n "$t1" ] && [ -n "$t2" ] && [ "$t2" -lt "$t1" ] && printf '%s' "$rc_out2" | grep -q '已完成，将跳过'; then
+  ok "已完成阶段从剩余耗时中扣除（$t1 -> $t2 分钟）"
+else
+  bad "断点续跑时耗时预估未扣除已完成阶段（$t1 -> $t2）"
+fi
+# 单节点不成其为"多机"，必须拒绝而不是跑出一份看起来正常的报告
+printf 'node01 slots=8\n' > "$RCDIR/h1"
+if bash "$BASE_DIR/scripts/cluster/run_cluster.sh" --dry-run "$RCDIR/h1" b300_8gpu >/dev/null 2>&1; then
+  bad "单节点 hostfile 不应被接受"
+else
+  ok "单节点 hostfile 被拒（多机项无法成立）"
+fi
+rm -rf "$RCDIR"
 
 echo
 if [ "$fails" -eq 0 ]; then
