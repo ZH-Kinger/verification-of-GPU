@@ -129,7 +129,7 @@ m_nvlink_down(){ sed -i '3s#.*#         Link 1: <inactive>#' "$1/nvlink_status.t
 m_driver()     { sed -i 's/610\.43\.02/570.12.01/' "$1/q_driver.txt"; }                # 驱动低于 580.105
 m_pcie()       { sed -i 's/, 1, 6, 16, 16/, 1, 5, 16, 16/' "$1/q_pcie.txt"; }          # 链路能力只有 Gen5
 m_throttle()   { sed -i 's/HW Thermal Slowdown : Not Active/HW Thermal Slowdown : Active/' "$1/perf_state.txt"; }
-m_temp()       { sed -i 's/, 78/, 91/' "$1/temp_after_burn.txt"; }                     # 压测温度 91°C
+m_temp()       { sed -i '$s/^7, [0-9]*,/7, 91,/' "$1/temp_during_burn.txt"; }        # 压测中某次采样 91°C
 m_power()      { sed -i 's/1100\.00 W/700.00 W/' "$1/q_power_limit.txt"; }             # TDP 不对
 m_allreduce()  { sed -i 's/845\.60/612.10/;s/812\.30/601.00/' "$1/nccl_all_reduce.txt"; }
 m_burn_fault() { echo "GPU 3: FAULTY" >> "$1/gpu_burn_1h.txt"; }
@@ -239,6 +239,17 @@ m_ecc_na()  { sed -i 's/, 0$/, [N\/A]/' "$1/q_ecc_uncorrected.txt"; }
 m_eccm_na() { sed -i 's/, Enabled$/, [N\/A]/' "$1/q_ecc_mode.txt"; }
 expect_verdict "ECC 计数返回 N/A"   "不可纠正错误"    m_ecc_na  SKIP
 expect_verdict "ECC 模式返回 N/A"   "ECC 状态确认"    m_eccm_na SKIP
+# 只有压测"结束后"的单次读数时不能判 PASS：GPU 几秒内就从 60+ °C 回落到 40 °C 左右，
+# 早期实现正是这样把压测温度报成 42 °C 的。
+m_temp_only_after() { rm -f "$1/temp_during_burn.txt"; }
+expect_verdict "只有压测后的温度读数" "GPU 温度(压测期间)" m_temp_only_after SKIP
+# 容器里没有 /dev/ipmi0：ipmitool 只打一行报错。曾被数成"1 个风扇、异常 0"判 PASS。
+m_fan_noipmi() { echo "Could not open device at /dev/ipmi0 or /dev/ipmi/0 or /dev/ipmidev/0: No such file or directory" > "$1/ipmi_fan.txt"; }
+expect_verdict "ipmitool 打不开 BMC 设备" "风扇状态" m_fan_noipmi SKIP
+# 长稳 1 秒就退出（镜像缺库，gpu_burn exit=127）：增量全是 0，不能判 PASS。
+m_soak_nolib() { echo 1 > "$1/soak/duration_actual_seconds.txt"; echo 127 > "$1/soak/gpu_burn.exit"; }
+expect_verdict "长稳 1 秒退出，XID 增量" "XID 增量" m_soak_nolib SKIP
+expect_verdict "长稳 1 秒退出，CRC 增量" "NVLink CRC 增量" m_soak_nolib SKIP
 
 # 报表结构：必须给出准确数值和可复现的命令，而不是 yes/no
 if grep -q '测试手段/命令' "$NODE/acceptance_report.tsv" && grep -q '余量' "$NODE/acceptance_report.tsv"; then
@@ -825,6 +836,18 @@ else
   ok "单节点 hostfile 被拒（多机项无法成立）"
 fi
 rm -rf "$RCDIR"
+
+# run_acceptance.sh 曾漏 source lib/common.sh：standard / soak 在第一步就报
+# "resolve_profile: command not found"，连显式给的 profile 都用不上。
+# 只看能否走过 profile 解析——之后的预检在无 GPU 的机器上失败是预期的。
+ra_out="$(bash "$BASE_DIR/scripts/run_acceptance.sh" standard h200_8gpu 2>&1 || true)"
+if printf '%s' "$ra_out" | grep -q 'command not found'; then
+  bad "run_acceptance.sh standard 调用了未定义的函数：$(printf '%s' "$ra_out" | grep 'command not found' | head -n1)"
+elif printf '%s' "$ra_out" | grep -q 'profile=h200_8gpu'; then
+  ok "run_acceptance.sh standard 接受显式 profile 并进入预检"
+else
+  bad "run_acceptance.sh standard 未进入预检：$(printf '%s' "$ra_out" | head -n3 | tr '\n' ' ')"
+fi
 
 echo
 if [ "$fails" -eq 0 ]; then

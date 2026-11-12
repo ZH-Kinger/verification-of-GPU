@@ -249,10 +249,15 @@ fi
 
 if cap_exists ipmi_fan && ! grep -q 'not found' "$LOG_DIR/ipmi_fan.txt"; then
   # ipmitool sensor list 列序：名称 | 读数 | 单位 | 状态 | 各级阈值...
-  fan_total="$(cap ipmi_fan | grep -c .)"
+  # 只数真正的传感器行（≥4 个 | 分隔字段）。曾经按"非空行"计数：容器里没有
+  # /dev/ipmi0 时 ipmitool 只打一行报错，被当成"1 个风扇、异常 0"判了 PASS。
+  fan_total="$(cap ipmi_fan | awk -F'|' 'NF>=4' | grep -c .)"
   fan_bad="$(cap ipmi_fan | awk -F'|' 'NF>=4 {gsub(/ /,"",$4); if($4!="" && $4!="ok" && $4!="na") n++} END{print n+0}')"
   fan_rpm="$(cap ipmi_fan | awk -F'|' 'NF>=2 {gsub(/ /,"",$2); if($2 ~ /^[0-9.]+$/) print $2+0}' | range_of)"
-  if [ "$fan_bad" -eq 0 ]; then
+  if [ "$fan_total" -eq 0 ]; then
+    report_row 1 "散热" "风扇状态" "N/A" "全部正常，无告警" SKIP \
+      "未读到任何风扇传感器：$(head -n1 "$LOG_DIR/ipmi_fan.txt" | cut -c1-80)"
+  elif [ "$fan_bad" -eq 0 ]; then
     report_row 1 "散热" "风扇状态" "${fan_total} 个，转速 ${fan_rpm:-?} RPM，异常 0" \
       "全部正常，无告警" PASS
   else
@@ -455,8 +460,15 @@ if cap_exists gpu_burn_1h; then
       END { print m+0 }' \
       "$LOG_DIR/ecc_before_burn.txt" "$LOG_DIR/ecc_after_burn.txt" 2>/dev/null)"
   report_le 3 "GPU 压力" "压测 ECC 增量" "${ecc_burn_delta:-}" "$ECC_CORRECTED_MAX" "个" "单卡可纠正错误增量最大值"
-  tmax="$(colN_num temp_after_burn 2 | num_max)"
-  report_le 1 "散热" "GPU 温度(压测期间)" "$tmax" "$GPU_TEMP_MAX_C" "°C" "gpu_burn 结束时刻采样；连续采样见 §8"
+  # 只认压测期间的连续采样。旧日志只有 temp_after_burn（结束后采一次），
+  # 那个值比压测中低 20 °C 以上，拿它判 PASS 等于没测——宁可 SKIP。
+  if [ -s "$LOG_DIR/temp_during_burn.txt" ]; then
+    tmax="$(colN_num temp_during_burn 2 | num_max)"
+    tn="$(colN_num temp_during_burn 2 | wc -l | tr -d ' ')"
+    report_le 1 "散热" "GPU 温度(压测期间)" "$tmax" "$GPU_TEMP_MAX_C" "°C" "gpu_burn 期间每 10s 采样，共 ${tn} 个样本取最大"
+  else
+    report_le 1 "散热" "GPU 温度(压测期间)" "" "$GPU_TEMP_MAX_C" "°C" "无压测期间采样（旧日志只有结束后读数，不能代表压测中温度）"
+  fi
 else
   if [ -f "$LOG_DIR/gpu_burn_skipped.txt" ]; then
     burn_why="操作员主动跳过（SKIP_GPU_BURN=1）"
@@ -802,6 +814,17 @@ if [ -d "$SOAK" ]; then
   else
     report_row 8 "长稳烤机" "GPU 满载稳定性" "${dur}s, exit=${soak_rc:-?}, FAULTY=$faulty" "零掉卡" FAIL
   fi
+  # 长稳没有真正跑起来（提前结束或 gpu_burn 非 0 退出）时，增量和温度都是"没负载"
+  # 下的读数，0 增量、0 °C 波动会被 report_le 判成 PASS。曾因镜像缺库 gpu_burn
+  # exit=127、1 秒结束，判定表却列出一排 §8 PASS。
+  soak_valid=1
+  { [ "$short_run" = "1" ] || [ "$soak_rc" != "0" ]; } && soak_valid=0
+  if [ "$soak_valid" = "0" ]; then
+    why="长稳未有效执行（实际 ${dur}s / 计划 ${dur_planned}s，gpu_burn exit=${soak_rc:-?}），增量不构成证据"
+    for item in "XID 增量" "可纠正 ECC 增量" "不可纠正 ECC 增量" "NVLink CRC 增量" "温度峰值/波动"; do
+      report_row 8 "长稳烤机" "$item" "N/A" "长稳跑满后判定" SKIP "$why"
+    done
+  else
   report_le 8 "长稳烤机" "XID 增量" "$xid_delta" "$SOAK_XID_MAX" "条"
   report_le 8 "长稳烤机" "可纠正 ECC 增量" "$ecc_delta" "$ECC_CORRECTED_MAX" "个" "单卡最大增量"
   report_le 8 "长稳烤机" "不可纠正 ECC 增量" "$unc_delta" "$ECC_UNCORRECTED_MAX" "个"
@@ -825,6 +848,7 @@ if [ -d "$SOAK" ]; then
     report_le 8 "长稳烤机" "温度波动" "$fluct" "$GPU_TEMP_FLUCT_MAX_C" "°C" "单卡窗口内 max-min 的最大值"
   else
     report_row 8 "长稳烤机" "温度峰值/波动" "N/A" "峰值<=${GPU_TEMP_MAX_C}°C，波动<=${GPU_TEMP_FLUCT_MAX_C}°C" SKIP
+  fi
   fi
 else
   report_row 8 "长稳烤机" "GPU 满载稳定性" "未执行" "零掉卡/ECC/XID/NVLink CRC 增量" SKIP \

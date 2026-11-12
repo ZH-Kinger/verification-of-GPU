@@ -56,6 +56,10 @@ set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BASE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+# resolve_profile（standard / soak 两个模式用）定义在这里。漏了它两个模式都会在
+# 第一步报"无法确定机型档案"——即使命令行已经显式给了 profile。
+# shellcheck source=lib/common.sh
+. "$SCRIPT_DIR/lib/common.sh"
 
 MODE="${1:-${MODE:-fieldiag}}"
 
