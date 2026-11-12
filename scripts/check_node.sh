@@ -829,6 +829,20 @@ if [ -d "$SOAK" ]; then
   report_le 8 "长稳烤机" "可纠正 ECC 增量" "$ecc_delta" "$ECC_CORRECTED_MAX" "个" "单卡最大增量"
   report_le 8 "长稳烤机" "不可纠正 ECC 增量" "$unc_delta" "$ECC_UNCORRECTED_MAX" "个"
   report_le 8 "长稳烤机" "NVLink CRC 增量" "$crc_delta" "$SOAK_NVLINK_CRC_DELTA_MAX" "个"
+  # 标准要求「gpu_burn + 持续 NCCL AllReduce」：NCCL 轮次要真的成功，不能只看跑了几轮
+  n_tot="$(cat "$SOAK/nccl_iterations.txt" 2>/dev/null || echo "")"
+  n_ok="$(cat "$SOAK/nccl_ok_iterations.txt" 2>/dev/null || echo "")"
+  if ! is_num "$n_tot" || [ "$n_tot" -eq 0 ]; then
+    report_row 8 "长稳烤机" "持续 NCCL 负载" "N/A" "全程 AllReduce 成功" SKIP "无 NCCL 轮次记录"
+  elif ! is_num "$n_ok"; then
+    report_row 8 "长稳烤机" "持续 NCCL 负载" "共 ${n_tot} 轮，成功数未记录" "全程 AllReduce 成功" SKIP \
+      "旧版 soak 只记轮数不记成败，不能据此判 PASS"
+  elif [ "$n_ok" -eq "$n_tot" ]; then
+    report_row 8 "长稳烤机" "持续 NCCL 负载" "${n_ok}/${n_tot} 轮成功" "全程 AllReduce 成功" PASS
+  else
+    report_row 8 "长稳烤机" "持续 NCCL 负载" "${n_ok}/${n_tot} 轮成功" "全程 AllReduce 成功" FAIL \
+      "见 soak/nccl_loop.txt；全部失败多为显存被 gpu_burn 占满"
+  fi
 
   if [ -s "$SOAK/samples.csv" ]; then
     # samples.csv: timestamp,index,temperature,power,sm_clock,...

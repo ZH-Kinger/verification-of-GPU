@@ -18,7 +18,8 @@
 | `jobs/single/` | 单机：`probe.sh` + `bench.py`（PyTorch 版快速探测）、`run_standard.sh`（调 `scripts/run_acceptance.sh standard`）、`memstress.sh`、`hwinfo.sh`、`speed_io.sh`、`dcgm_l4.sh` |
 | `jobs/multi/` | 多机：`multinode.sh`（RDMA 逐口/聚合、GDR、NCCL、GPFS 双客户端）、`nccl16.sh`、`rdma2.sh` |
 | `jobs/bench/` | 硬件理论值（`hwpeak*`、`gemm_power.py`）、训练基准（`vla_bench.sh`、`openwam_bench.sh`、`registry_job.sh`）、存储（`storage_recheck.sh`、`oss_bench.py`）、镜像解包运行（`unpack_image.sh`、`imgenv.sh`） |
-| `jobs/soak/soak_job.sh` | §8 长稳：先做 30 s gpu_burn 自检，再调 `run_acceptance.sh soak` |
+| `jobs/soak/soak_job.sh` | §8 长稳：先让 gpu_burn 与一轮 NCCL 同时跑通，再调 `run_acceptance.sh soak` |
+| `jobs/soak/watch.sh` | 长稳看护：任务退出、gpu_burn 报错、NCCL 有失败轮次、利用率低于 90% 时提醒 |
 | `build/` | 在 `nvidia/cuda:12.9.1-devel-ubuntu22.04` 容器里编 nvbandwidth、nccl-tests（MPI=0/1）、gpu-burn、cuda-samples、STREAM |
 
 ## 准备
@@ -69,6 +70,7 @@ DIST=0 HOSTNET=0 ./jobctl hold <name> 2 24                                      
 | GDR perftest `unrecognized option --use_cuda` / 缺 `libefa.so.1` | 发行版 perftest 不带 CUDA；容器外编的二进制依赖 EFA | 在副本里对着镜像 OFED + CUDA 头文件现编 |
 | 公共镜像里 `mpirun --allow-run-as-root` 不认 | 自带 OpenMPI 包装器不完整 | precheck 镜像有 MLNX_OFED 的 `/usr/mpi/gcc/openmpi-4.1.7a1`，用它 |
 | gpu_burn / nccl-tests `exit=127` | 镜像是 CUDA 13，工具链接 CUDA 12 运行库 | 用 `pytorch-training-nvidia:...cuda12.9...` 镜像；`soak_job.sh` 先自检 |
+| 长稳期间 NCCL 每轮 `unhandled cuda error` | gpu_burn 默认占 90% 显存，all_reduce_perf 测 8 GB 要再申请约 16 GB | `soak_node.sh` 已改为 `gpu_burn -m 75%`；`soak_job.sh` 启动前让两者同时跑一轮 |
 | DCGM diag 报 `plugins/cuda13` 不存在 | 驱动 CUDA 13.2，装了 `-cuda12` 包 | 装 `datacenter-gpu-manager-4-cuda13` |
 | 镜像里 apt 装不了 | 公共镜像 apt 源指向 apt.ksyun.cn / developer.download.nvidia.com，内网不可达 | 改用平台 Nexus `<平台 Nexus>/repository/{ubuntu,nvidia-drivers-proxy}`，或 GPFS 上的离线 deb |
 | SSH 进训练副本后 `python3: command not found` | SSH 会话 PATH 缺 `/usr/local/bin` | `export PATH=/usr/local/bin:$PATH` |

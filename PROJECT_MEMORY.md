@@ -15,6 +15,7 @@ run_acceptance.sh 未 source lib/common.sh → standard / soak 一启动就退�
 GPU 温度(压测期间) 读的是压测结束后的值 → 改为压测中每 10 s 采样；旧日志判 SKIP
 风扇状态：ipmitool 打不开 /dev/ipmi0 的一行报错被计为"1 个风扇、异常 0"判 PASS → 判 SKIP
 §8：长稳未有效执行（gpu_burn 非 0 或未跑满）时 XID/ECC/CRC 增量 0 被判 PASS → 判 SKIP
+§8：gpu_burn 占 90% 显存使持续 NCCL 每轮 OOM，而只记轮数不记成败 → gpu_burn -m 75%，逐轮记成功数并判定
 ```
 
 仍待办：stressapptest 大内存加 `--pause_delay`；容器内 FM 状态 / 驱动参数改用 nvidia-smi 与 /proc 取证。

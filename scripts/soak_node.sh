@@ -106,7 +106,7 @@ sampler() {
 # NCCL 持续负载：标准要求"gpu_burn + 持续 NCCL AllReduce"
 nccl_loop() {
   local end=$(( $(date +%s) + DURATION ))
-  local n=0
+  local n=0 ok=0
   : > "$SOAK_DIR/nccl_loop.txt"
   [ -z "$AR" ] && { echo "all_reduce_perf 未找到，NCCL 持续负载跳过" > "$SOAK_DIR/nccl_loop.txt"; return 0; }
   local fast_fail=0
@@ -118,6 +118,12 @@ nccl_loop() {
     # shellcheck disable=SC2086
     "$AR" $NCCL_BENCH_ARGS >> "$SOAK_DIR/nccl_loop.txt" 2>&1
     rc=$?
+    [ "$rc" -eq 0 ] && ok=$((ok + 1))
+    # 每轮都落盘：长稳结束时 cleanup 直接杀掉本循环，循环外的收尾代码执行不到。
+    # 只记「跑了几轮」不够 —— 显存被 gpu_burn 占满时每轮都 OOM 失败，
+    # 曾有 725 轮全部失败、报告里却只看到「NCCL 迭代 725 次」。
+    echo "$n" > "$SOAK_DIR/nccl_iterations.txt"
+    echo "$ok" > "$SOAK_DIR/nccl_ok_iterations.txt"
     # 二进制起不来时每轮只花几毫秒，18 小时能空转上百万次、
     # 把日志写到撑爆 U 盘。连续 3 次秒退就停，并把原因留在文件里。
     if [ "$rc" -ne 0 ] && [ $(( $(date +%s) - t0 )) -lt 5 ]; then
@@ -183,8 +189,10 @@ trap 'cleanup' EXIT
 
 # ------------------------------------------------------------ 主压测
 if [ -n "$BURN" ]; then
-  log "gpu_burn -tc $DURATION 开始（$(date -Is)）"
-  ( cd "$(dirname "$BURN")" && ./"$(basename "$BURN")" -tc "$DURATION" ) \
+  log "gpu_burn -m ${SOAK_GPU_BURN_MEM:-75%} -tc $DURATION 开始（$(date -Is)）"
+  # gpu_burn 默认吃 90% 显存，all_reduce_perf 测 8 GB 消息还要约 16 GB，同时跑必然 OOM。
+  # 给 NCCL 留出空间；SOAK_GPU_BURN_MEM 可覆盖（gpu_burn -m 语法：N% 或 MB 数）。
+  ( cd "$(dirname "$BURN")" && ./"$(basename "$BURN")" -m "${SOAK_GPU_BURN_MEM:-75%}" -tc "$DURATION" ) \
     > "$SOAK_DIR/gpu_burn.txt" 2>&1
   echo "$?" > "$SOAK_DIR/gpu_burn.exit"
   log "gpu_burn 结束（$(date -Is)），exit=$(cat "$SOAK_DIR/gpu_burn.exit")"
@@ -222,7 +230,7 @@ SOAK_ELAPSED="$(cat "$SOAK_DIR/duration_actual_seconds.txt" 2>/dev/null \
   echo "计划时长            : ${DURATION}s"
   echo "实际时长            : ${SOAK_ELAPSED}s"
   echo "gpu_burn exit       : $(cat "$SOAK_DIR/gpu_burn.exit")"
-  echo "NCCL 迭代次数        : $(cat "$SOAK_DIR/nccl_iterations.txt" 2>/dev/null || echo 0)"
+  echo "NCCL 成功/总轮数      : $(cat "$SOAK_DIR/nccl_ok_iterations.txt" 2>/dev/null || echo 0)/$(cat "$SOAK_DIR/nccl_iterations.txt" 2>/dev/null || echo 0)"
   echo "可纠正 ECC 增量(单卡max): $(cat "$SOAK_DIR/ecc_corrected_delta.txt")"
   echo "不可纠正 ECC 增量      : $(cat "$SOAK_DIR/ecc_uncorrected_delta.txt")"
   echo "XID 增量              : $(cat "$SOAK_DIR/xid_delta.txt")"

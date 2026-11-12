@@ -250,6 +250,11 @@ expect_verdict "ipmitool 打不开 BMC 设备" "风扇状态" m_fan_noipmi SKIP
 m_soak_nolib() { echo 1 > "$1/soak/duration_actual_seconds.txt"; echo 127 > "$1/soak/gpu_burn.exit"; }
 expect_verdict "长稳 1 秒退出，XID 增量" "XID 增量" m_soak_nolib SKIP
 expect_verdict "长稳 1 秒退出，CRC 增量" "NVLink CRC 增量" m_soak_nolib SKIP
+# 长稳期间 NCCL 每轮都 OOM：只看轮数会误以为 NCCL 负载正常
+m_soak_nccl_fail() { echo 725 > "$1/soak/nccl_iterations.txt"; echo 0 > "$1/soak/nccl_ok_iterations.txt"; }
+mutate_expect "长稳 NCCL 725 轮全失败" "持续 NCCL 负载" m_soak_nccl_fail
+m_soak_nccl_noinfo() { rm -f "$1/soak/nccl_ok_iterations.txt"; }
+expect_verdict "旧版 soak 无成功轮数" "持续 NCCL 负载" m_soak_nccl_noinfo SKIP
 
 # 报表结构：必须给出准确数值和可复现的命令，而不是 yes/no
 if grep -q '测试手段/命令' "$NODE/acceptance_report.tsv" && grep -q '余量' "$NODE/acceptance_report.tsv"; then
