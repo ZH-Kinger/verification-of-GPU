@@ -253,6 +253,9 @@ expect_verdict "长稳 1 秒退出，CRC 增量" "NVLink CRC 增量" m_soak_noli
 # 长稳期间 NCCL 每轮都 OOM：只看轮数会误以为 NCCL 负载正常
 m_soak_nccl_fail() { echo 725 > "$1/soak/nccl_iterations.txt"; echo 0 > "$1/soak/nccl_ok_iterations.txt"; }
 mutate_expect "长稳 NCCL 725 轮全失败" "持续 NCCL 负载" m_soak_nccl_fail
+# 采样器先于 gpu_burn 启动，首个样本是空载温度：不能算进波动
+m_soak_idle_first() { f="$1/soak/samples.csv"; { head -1 "$f"; for g in 0 1 2 3 4 5 6 7; do echo "1786000000,$g,36,125.0,1980,0x1,0"; done; tail -n +2 "$f"; } > "$f.t" && mv "$f.t" "$f"; }
+expect_verdict "长稳首个样本为空载温度" "温度波动" m_soak_idle_first PASS
 m_soak_nccl_noinfo() { rm -f "$1/soak/nccl_ok_iterations.txt"; }
 expect_verdict "旧版 soak 无成功轮数" "持续 NCCL 负载" m_soak_nccl_noinfo SKIP
 
