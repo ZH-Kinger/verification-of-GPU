@@ -2,6 +2,23 @@
 
 Last updated: 2026-08-10
 
+## v3.3 — 云平台验收（2026-11-10 ～ 11-13，仪电智算云 2 × H200）
+
+新增 `platform/yicloud/`：在平台训练任务 / 开发机容器里跑本项目，配套 OpenAPI 工具 `jobctl`。
+报告 `docs/yicloud_h200_acceptance_2026-11.md`。结论：单机、多机（RoCE v2，8×400G 达线速）全部达标；
+GPFS 元数据高并发退化、对象存储只够冷存储；平台记录问题 18 项（阻断 4 项）。
+
+本轮修掉的验收工具缺陷（均有回归测试，并做过撤销修复后测试变红的验证）：
+
+```text
+run_acceptance.sh 未 source lib/common.sh → standard / soak 一启动就退出
+GPU 温度(压测期间) 读的是压测结束后的值 → 改为压测中每 10 s 采样；旧日志判 SKIP
+风扇状态：ipmitool 打不开 /dev/ipmi0 的一行报错被计为"1 个风扇、异常 0"判 PASS → 判 SKIP
+§8：长稳未有效执行（gpu_burn 非 0 或未跑满）时 XID/ECC/CRC 增量 0 被判 PASS → 判 SKIP
+```
+
+仍待办：stressapptest 大内存加 `--pause_delay`；容器内 FM 状态 / 驱动参数改用 nvidia-smi 与 /proc 取证。
+
 ## v3.0 — 对接甲方《验收标准》（2026-08-10）
 
 甲方给出一份逐条数值化的《验收标准》（8 章，约 50 项，第 23-29 页），

@@ -29,7 +29,7 @@ Boot menu (see `boot_configs/`):
 | `START_HERE.txt` | Shortest boot-to-run path |
 | `README.md` / `PROJECT_PLAN.md` / `PROJECT_MEMORY.md` | Overview, plan, state & decisions |
 | `profiles/` | **每机型的全部阈值与版本要求**（`b300_8gpu.env`, `h200_8gpu.env`） |
-| `docs/` | SOP, acceptance criteria, USB design, runbooks, completeness |
+| `docs/` | SOP, acceptance criteria, USB design, runbooks, completeness；`yicloud_h200_acceptance_2026-11.md` 为云平台验收报告 |
 | `scripts/` | Helper + orchestration scripts (see below) |
 | `scripts/cluster/` | 多机压测（RoCE §5 + 跨节点 NCCL §6） |
 | `tools/bin/` | **Precompiled** stress binaries (sm_90 H200 + sm_100 B300/GB300) |
@@ -78,6 +78,7 @@ Each run writes a timestamped dir under `logs/` plus a pre-filled `final_result.
 | `scripts/cluster/run_cluster.sh` | **多机一键入口**：串起 §5 §6 §6b，支持 `--dry-run` / `--check-env` / 断点续跑 |
 | `scripts/cluster/topo_discover.sh` | 生成 `topology.tsv`（IB=iblinkinfo / RoCE=LLDP / 主机名兜底）|
 | `scripts/cluster/straggler_check.sh` | §6b 慢节点体检，拓扑感知配对，出 `straggler.json` |
+| `platform/yicloud/` | 仪电智算云容器内验收：`jobctl`（OpenAPI）、单机/多机/存储/训练基准/长稳任务脚本、工具编译脚本，踩坑表见其 README |
 | `cluster/check_cluster.sh` | 多机判定 → `cluster_report.tsv` / `.txt` |
 | `lib/common.sh` | 共用：profile 加载、阈值断言、报告输出、输出解析 |
 | `offline_gpu_acceptance_collect.sh` | Low-level log/diag collector (v1.0 path) |

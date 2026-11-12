@@ -177,6 +177,17 @@ to `CUDA_ARCH`. nccl-tests is `make MPI=0` with `NVCC_GENCODE`.
   also says 18h. Profile follows the command; confirm with the customer before signing.
 - **fieldiag is absent from the customer standard** but is still stage 1 here.
 
+## Cloud-platform track (`platform/yicloud/`)
+
+A third way to run this toolkit: inside containers on a GPU cloud platform (仪电智算云),
+driven through its OpenAPI, with no host access. `scripts/` runs unchanged there; host-side
+items (DIMMs, fans, FM service, XID) SKIP and must come from the provider. Read
+`platform/yicloud/README.md` before touching it — its pitfall table is the result of a full
+two-node H200 run, and most rows cost an hour each. Two that bite hardest:
+the image's CUDA major version must match `tools/bin` (CUDA 12), or gpu_burn / nccl-tests
+exit 127 and a soak "finishes" in one second; and after submitting any long job, confirm real
+GPU load from inside the container before reporting it as running.
+
 ## Working on this repo
 
 - **Run `bash tests/run_parser_tests.sh` after any change to `check_node.sh`,
