@@ -249,10 +249,15 @@ fi
 
 if cap_exists ipmi_fan && ! grep -q 'not found' "$LOG_DIR/ipmi_fan.txt"; then
   # ipmitool sensor list 列序：名称 | 读数 | 单位 | 状态 | 各级阈值...
-  fan_total="$(cap ipmi_fan | grep -c .)"
+  # 只数真正的传感器行（≥4 个 | 分隔字段）。曾经按"非空行"计数：容器里没有
+  # /dev/ipmi0 时 ipmitool 只打一行报错，被当成"1 个风扇、异常 0"判了 PASS。
+  fan_total="$(cap ipmi_fan | awk -F'|' 'NF>=4' | grep -c .)"
   fan_bad="$(cap ipmi_fan | awk -F'|' 'NF>=4 {gsub(/ /,"",$4); if($4!="" && $4!="ok" && $4!="na") n++} END{print n+0}')"
   fan_rpm="$(cap ipmi_fan | awk -F'|' 'NF>=2 {gsub(/ /,"",$2); if($2 ~ /^[0-9.]+$/) print $2+0}' | range_of)"
-  if [ "$fan_bad" -eq 0 ]; then
+  if [ "$fan_total" -eq 0 ]; then
+    report_row 1 "散热" "风扇状态" "N/A" "全部正常，无告警" SKIP \
+      "未读到任何风扇传感器：$(head -n1 "$LOG_DIR/ipmi_fan.txt" | cut -c1-80)"
+  elif [ "$fan_bad" -eq 0 ]; then
     report_row 1 "散热" "风扇状态" "${fan_total} 个，转速 ${fan_rpm:-?} RPM，异常 0" \
       "全部正常，无告警" PASS
   else
@@ -455,8 +460,15 @@ if cap_exists gpu_burn_1h; then
       END { print m+0 }' \
       "$LOG_DIR/ecc_before_burn.txt" "$LOG_DIR/ecc_after_burn.txt" 2>/dev/null)"
   report_le 3 "GPU 压力" "压测 ECC 增量" "${ecc_burn_delta:-}" "$ECC_CORRECTED_MAX" "个" "单卡可纠正错误增量最大值"
-  tmax="$(colN_num temp_after_burn 2 | num_max)"
-  report_le 1 "散热" "GPU 温度(压测期间)" "$tmax" "$GPU_TEMP_MAX_C" "°C" "gpu_burn 结束时刻采样；连续采样见 §8"
+  # 只认压测期间的连续采样。旧日志只有 temp_after_burn（结束后采一次），
+  # 那个值比压测中低 20 °C 以上，拿它判 PASS 等于没测——宁可 SKIP。
+  if [ -s "$LOG_DIR/temp_during_burn.txt" ]; then
+    tmax="$(colN_num temp_during_burn 2 | num_max)"
+    tn="$(colN_num temp_during_burn 2 | wc -l | tr -d ' ')"
+    report_le 1 "散热" "GPU 温度(压测期间)" "$tmax" "$GPU_TEMP_MAX_C" "°C" "gpu_burn 期间每 10s 采样，共 ${tn} 个样本取最大"
+  else
+    report_le 1 "散热" "GPU 温度(压测期间)" "" "$GPU_TEMP_MAX_C" "°C" "无压测期间采样（旧日志只有结束后读数，不能代表压测中温度）"
+  fi
 else
   if [ -f "$LOG_DIR/gpu_burn_skipped.txt" ]; then
     burn_why="操作员主动跳过（SKIP_GPU_BURN=1）"
@@ -546,6 +558,66 @@ if cap_exists nvidia_smi_topo; then
   fi
 else
   report_row 4 "NVLink 拓扑" "拓扑验证" "N/A" "全互联 $NVLINK_TOPO_TAG" SKIP
+fi
+
+# GPU 与配对网卡的亲和性。rail-optimized 设计里 GPU_i 应当与 NIC_i 同在一个 PCIe
+# 域（PIX/PXB）；落到 NODE/PHB/SYS 说明 GDR 流量要绕 Host Bridge 甚至 CPU 间互连
+# （UPI/QPI），带宽掉三成以上，而 ibstat 与 nvidia-smi 全都正常，只有本项能看出来。
+# 常见成因：网卡插错槽位、riser 用错、BIOS PCIe 通道分配不对。
+if cap_exists nvidia_smi_topo; then
+  aff_ok="${GPU_NIC_AFFINITY_OK:-}"
+  if [ -z "$aff_ok" ]; then
+    report_row 4 "GPU-NIC 亲和" "GDR 路径" "N/A" "配对网卡为 PIX/PXB" SKIP \
+      "profile 缺 GPU_NIC_AFFINITY_OK"
+  else
+    aff_out="$(cap nvidia_smi_topo | awk -v ok="$aff_ok" '
+      # nvidia-smi 会给表头加 ANSI 下划线转义，捕获到文件里也在，先剥掉再匹配。
+      { gsub(/\033\[[0-9;]*m/, "") }
+      # 表头行：只有它同时含 GPU0 与 NIC0。
+      # 列对齐：表头通常以分隔符开头（$1 为空），此时表头与数据行列号天然一致；
+      # 少数版本表头首字段直接是 GPU0，这时数据行多了一个行标签字段，需 +1。
+      /GPU0/ && /NIC0/ && !hdr {
+        off = ($1 == "" ? 0 : 1)
+        for (i = 1; i <= NF; i++) if ($i ~ /^NIC[0-9]+$/) { n = substr($i, 4) + 0; nic[n] = i + off }
+        hdr = 1; next
+      }
+      hdr && /^GPU[0-9]+/ {
+        g = substr($1, 4) + 0
+        gpus++
+        col = nic[g]
+        if (col == 0 || col > NF) { unpaired++; next }
+        v = $col
+        gsub(/^[ \t]+|[ \t]+$/, "", v)
+        seen[v]++
+        good = 0
+        split(ok, allow, " ")
+        for (k in allow) if (v == allow[k]) good = 1
+        if (good) pass++; else { bad++; badlist = badlist (badlist ? "," : "") "GPU" g "=" v }
+      }
+      END {
+        printf "%d\t%d\t%d\t%d\t%s", gpus + 0, pass + 0, bad + 0, unpaired + 0, badlist
+      }' FS='\t')"
+    IFS=$'\t' read -r aff_total aff_pass aff_bad aff_unpaired aff_list <<< "$aff_out"
+    if [ "${aff_total:-0}" -eq 0 ]; then
+      report_row 4 "GPU-NIC 亲和" "GDR 路径" "N/A" "配对网卡为 ${aff_ok// //}" SKIP \
+        "topo -m 无 NIC 列（未装 RDMA 网卡或驱动未识别）"
+    elif [ "${aff_unpaired:-0}" -gt 0 ]; then
+      # 网卡数少于 GPU 数：rail-optimized 不成立，必须列出来而不是按通过处理
+      report_row 4 "GPU-NIC 亲和" "GDR 路径" \
+        "${aff_total} 个 GPU 中 ${aff_unpaired} 个找不到配对网卡" \
+        "每个 GPU 配一张网卡，且为 ${aff_ok// //}" FAIL "网卡数不足或槽位错配"
+    elif [ "${aff_bad:-0}" -eq 0 ]; then
+      report_row 4 "GPU-NIC 亲和" "GDR 路径" \
+        "${aff_pass}/${aff_total} 个 GPU 与配对网卡同 PCIe 域（${aff_ok// //}）" \
+        "全部为 ${aff_ok// //}" PASS
+    else
+      report_row 4 "GPU-NIC 亲和" "GDR 路径" \
+        "${aff_pass}/${aff_total} 个合格，${aff_bad} 个跨域：${aff_list}" \
+        "全部为 ${aff_ok// //}" FAIL "GDR 需绕 Host Bridge/UPI，ibstat 看不出来"
+    fi
+  fi
+else
+  report_row 4 "GPU-NIC 亲和" "GDR 路径" "N/A" "配对网卡为 PIX/PXB" SKIP "未采集 topo -m"
 fi
 
 if cap_exists nvlink_status; then
@@ -657,15 +729,22 @@ if [ "${REQUIRE_NVIDIA_PEERMEM:-1}" = "1" ]; then
   fi
 fi
 
-fm_ver="$(cap fm_version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1)"
+# NVIDIA 要求 Fabric Manager 与驱动版本**完全一致**，不是主版本一致：
+# 550.127.05 的驱动配 550.54.15 的 FM，服务会拒绝启动，NVLink 多卡通信随之异常。
+# 原来只比 `${ver%%.*}`（主版本）会把这种组合判成 PASS —— 现场表现是 §4 的
+# 「FM 状态」变红而 §7 这行还是绿的，排查方向会被带偏到服务日志上。
+# 版本位数不做归一：FM 与驱动本就该给出同一个字符串，位数不同本身就是不一致。
+fm_ver="$(cap fm_version | grep -oE '[0-9]+(\.[0-9]+)+' | head -n1)"
 if [ -n "$fm_ver" ] && [ -n "$drv_one" ]; then
-  if [ "${fm_ver%%.*}" = "${drv_one%%.*}" ]; then
-    report_row 7 "Fabric Manager" "FM 版本与状态" "FM $fm_ver / 驱动 $drv_one" "与驱动版本匹配，服务 Active" PASS
+  if [ "$fm_ver" = "$drv_one" ]; then
+    report_row 7 "Fabric Manager" "FM 版本与状态" "FM $fm_ver / 驱动 $drv_one（完全一致）" \
+      "与驱动版本完全一致，服务 Active" PASS
   else
-    report_row 7 "Fabric Manager" "FM 版本与状态" "FM $fm_ver / 驱动 $drv_one" "与驱动版本匹配" FAIL "主版本不一致"
+    report_row 7 "Fabric Manager" "FM 版本与状态" "FM $fm_ver / 驱动 $drv_one" \
+      "与驱动版本完全一致" FAIL "版本不一致：FM 会拒绝启动，NVLink 多卡通信异常"
   fi
 else
-  report_row 7 "Fabric Manager" "FM 版本与状态" "N/A" "与驱动版本匹配，服务 Active" SKIP
+  report_row 7 "Fabric Manager" "FM 版本与状态" "N/A" "与驱动版本完全一致，服务 Active" SKIP
 fi
 
 if [ "${REQUIRE_GDRCOPY:-0}" = "1" ]; then
@@ -735,10 +814,35 @@ if [ -d "$SOAK" ]; then
   else
     report_row 8 "长稳烤机" "GPU 满载稳定性" "${dur}s, exit=${soak_rc:-?}, FAULTY=$faulty" "零掉卡" FAIL
   fi
+  # 长稳没有真正跑起来（提前结束或 gpu_burn 非 0 退出）时，增量和温度都是"没负载"
+  # 下的读数，0 增量、0 °C 波动会被 report_le 判成 PASS。曾因镜像缺库 gpu_burn
+  # exit=127、1 秒结束，判定表却列出一排 §8 PASS。
+  soak_valid=1
+  { [ "$short_run" = "1" ] || [ "$soak_rc" != "0" ]; } && soak_valid=0
+  if [ "$soak_valid" = "0" ]; then
+    why="长稳未有效执行（实际 ${dur}s / 计划 ${dur_planned}s，gpu_burn exit=${soak_rc:-?}），增量不构成证据"
+    for item in "XID 增量" "可纠正 ECC 增量" "不可纠正 ECC 增量" "NVLink CRC 增量" "温度峰值/波动"; do
+      report_row 8 "长稳烤机" "$item" "N/A" "长稳跑满后判定" SKIP "$why"
+    done
+  else
   report_le 8 "长稳烤机" "XID 增量" "$xid_delta" "$SOAK_XID_MAX" "条"
   report_le 8 "长稳烤机" "可纠正 ECC 增量" "$ecc_delta" "$ECC_CORRECTED_MAX" "个" "单卡最大增量"
   report_le 8 "长稳烤机" "不可纠正 ECC 增量" "$unc_delta" "$ECC_UNCORRECTED_MAX" "个"
   report_le 8 "长稳烤机" "NVLink CRC 增量" "$crc_delta" "$SOAK_NVLINK_CRC_DELTA_MAX" "个"
+  # 标准要求「gpu_burn + 持续 NCCL AllReduce」：NCCL 轮次要真的成功，不能只看跑了几轮
+  n_tot="$(cat "$SOAK/nccl_iterations.txt" 2>/dev/null || echo "")"
+  n_ok="$(cat "$SOAK/nccl_ok_iterations.txt" 2>/dev/null || echo "")"
+  if ! is_num "$n_tot" || [ "$n_tot" -eq 0 ]; then
+    report_row 8 "长稳烤机" "持续 NCCL 负载" "N/A" "全程 AllReduce 成功" SKIP "无 NCCL 轮次记录"
+  elif ! is_num "$n_ok"; then
+    report_row 8 "长稳烤机" "持续 NCCL 负载" "共 ${n_tot} 轮，成功数未记录" "全程 AllReduce 成功" SKIP \
+      "旧版 soak 只记轮数不记成败，不能据此判 PASS"
+  elif [ "$n_ok" -eq "$n_tot" ]; then
+    report_row 8 "长稳烤机" "持续 NCCL 负载" "${n_ok}/${n_tot} 轮成功" "全程 AllReduce 成功" PASS
+  else
+    report_row 8 "长稳烤机" "持续 NCCL 负载" "${n_ok}/${n_tot} 轮成功" "全程 AllReduce 成功" FAIL \
+      "见 soak/nccl_loop.txt；全部失败多为显存被 gpu_burn 占满"
+  fi
 
   if [ -s "$SOAK/samples.csv" ]; then
     # samples.csv: timestamp,index,temperature,power,sm_clock,...
@@ -746,18 +850,35 @@ if [ -d "$SOAK" ]; then
     # 每张卡的最小温度都变成 0，波动直接等于峰值 —— 一台完全正常的机器会被判 FAIL。
     peak="$(awk -F',' 'NR>1 && $3+0>0 {gsub(/ /,"",$3); if($3+0>m) m=$3+0}
                        END{if(m) printf "%.0f", m}' "$SOAK/samples.csv")"
-    fluct="$(awk -F',' 'NR>1 {
-                gsub(/ /,"",$2); gsub(/ /,"",$3);
+    # 尾部同理：gpu_burn 结束后采样器还会再采一次空载温度（实测 H200 从 60 °C
+    # 掉到 35 °C），18h 全程负载下 7 °C 的波动因此被报成 26 °C。只截掉「最后一个
+    # 有负载样本」之后的部分；中途掉负载的样本照样计入，那正是要抓的问题。
+    # 旧版 samples.csv 没有利用率列（第 7 列）时不截尾。
+    fluct="$(awk -F',' -v warm="${SOAK_TEMP_WARMUP_S:-x}" '
+              FNR==1 { next }
+              NR==FNR { u=$7; gsub(/[^0-9.]/,"",u); t=$1; gsub(/ /,"",t)
+                        if(u!="" && u+0>=50 && t+0>tl) tl=t+0; next }
+              {
+                gsub(/ /,"",$1); gsub(/ /,"",$2); gsub(/ /,"",$3);
                 if($2 !~ /^[0-9]+$/ || $3 !~ /^[0-9.]+$/) next;
+                if(t0=="") t0=$1+0;
+                if(warm ~ /^[0-9]+$/ && $1+0 < t0+warm) next;
+                if(tl!="" && $1+0 > tl) next;
                 g=$2+0; v=$3+0;
                 if(!(g in mx) || v>mx[g]) mx[g]=v;
                 if(!(g in mn) || v<mn[g]) mn[g]=v }
               END{ m=0; for(g in mx){ d=mx[g]-mn[g]; if(d>m) m=d } printf "%.0f", m }' \
-              "$SOAK/samples.csv")"
+              "$SOAK/samples.csv" "$SOAK/samples.csv")"
     report_le 8 "长稳烤机" "温度峰值" "$peak" "$GPU_TEMP_MAX_C" "°C"
-    report_le 8 "长稳烤机" "温度波动" "$fluct" "$GPU_TEMP_FLUCT_MAX_C" "°C" "单卡窗口内 max-min 的最大值"
+    if is_num "${SOAK_TEMP_WARMUP_S:-}"; then
+      report_le 8 "长稳烤机" "温度波动" "$fluct" "$GPU_TEMP_FLUCT_MAX_C" "°C" "单卡 max-min 的最大值，跳过开头 ${SOAK_TEMP_WARMUP_S}s 升温段与负载结束后的空载样本"
+    else
+      report_row 8 "长稳烤机" "温度波动" "N/A" "<= $GPU_TEMP_FLUCT_MAX_C °C" SKIP \
+        "profile 未定义 SOAK_TEMP_WARMUP_S：不扣除升温段时空载样本会让正常机器判 FAIL"
+    fi
   else
     report_row 8 "长稳烤机" "温度峰值/波动" "N/A" "峰值<=${GPU_TEMP_MAX_C}°C，波动<=${GPU_TEMP_FLUCT_MAX_C}°C" SKIP
+  fi
   fi
 else
   report_row 8 "长稳烤机" "GPU 满载稳定性" "未执行" "零掉卡/ECC/XID/NVLink CRC 增量" SKIP \

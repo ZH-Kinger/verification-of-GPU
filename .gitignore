@@ -19,3 +19,4 @@ logs/*
 reports/*
 inventory/*
 !**/.gitkeep
+__pycache__/

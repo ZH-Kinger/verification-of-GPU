@@ -190,6 +190,87 @@ else
   fi
 fi
 
+# ------------------------------------------ §6b 慢节点体检（straggler_check.sh）
+# §6 判"够不够快"（对绝对阈值），本节判"有没有拖后腿的"（对同批中位数）。
+# 两者互补：全员一起劣化时 §6 会 FAIL 而本节全绿；绝对达标但藏着一台差 15% 的
+# 机器时反过来。没有 straggler.json 一律 SKIP —— 工具没跑过绝不能读成通过。
+STRAG_JSON="$LOG_DIR/straggler.json"
+if [ -s "$STRAG_JSON" ]; then
+  strag="$(python3 - "$STRAG_JSON" <<'PYEOF'
+import json, sys
+try:
+    d = json.load(open(sys.argv[1], encoding="utf-8"))
+except Exception as exc:                       # 文件损坏也不能当成通过
+    print(f"BAD\t{exc}")
+    raise SystemExit(0)
+gpus, nodes = d.get("gpus", []), d.get("nodes", [])
+slow_gpu = [g for g in gpus if g.get("slow")]
+slow_node = [n for n in nodes if any(c.get("slow") for c in n.get("classes", {}).values())]
+groups = d.get("groups", [])
+tv = d.get("topology") or {}
+over = tv.get("oversubscription")
+attrib = [f"rank{g['rank']}@{g['host']}: {g['attribution']}"
+          for g in gpus if g.get("attribution")]
+print("\t".join([
+    "OK",
+    str(len(gpus)), str(len(slow_gpu)),
+    str(len(nodes)), str(len(slow_node)),
+    ",".join(n["host"] for n in slow_node) or "-",
+    str(len(groups)),
+    str(d.get("min_perf_ratio", "")),
+    "；".join(attrib) or "-",
+    "" if over is None else f"{over:.2f}",
+    "" if not tv.get("intra_bw_gbs") else f"{tv['intra_bw_gbs']:.1f}",
+    "" if not tv.get("inter_bw_gbs") else f"{tv['inter_bw_gbs']:.1f}",
+]))
+PYEOF
+)"
+  IFS=$'\t' read -r st n_gpu n_slow n_node n_snode snodes n_grp ratio attrib over ibw xbw <<< "$strag"
+  if [ "$st" != OK ]; then
+    # 两行都要出：少一行就是"配置了的指标静默消失"，看报告的人不会发现少了什么
+    report_row 6 "慢节点体检" "同批均一性" "N/A" \
+      ">= 同批中位 ${CLUSTER_STRAGGLER_MIN_RATIO:-?}" SKIP "straggler.json 无法解析：$n_gpu"
+    report_row 6 "慢节点体检" "拓扑分组" "N/A" "按 leaf/rail 分组比较" SKIP "straggler.json 无法解析"
+    report_row 6 "计算网拓扑" "实测收敛比" "N/A" "<= ${CLUSTER_OVERSUBSCRIPTION_MAX:-?} : 1" SKIP "straggler.json 无法解析"
+  else
+    pct="$(awk -v r="$ratio" 'BEGIN{printf "%.0f", r*100}')"
+    if [ "$n_slow" -eq 0 ] && [ "$n_snode" -eq 0 ]; then
+      report_row 6 "慢节点体检" "同批均一性" \
+        "${n_gpu} 个 GPU、${n_node} 个节点全部不低于同批中位的 ${pct}%" \
+        ">= 同批中位 ${pct}%" PASS
+    else
+      report_row 6 "慢节点体检" "同批均一性" \
+        "${n_slow}/${n_gpu} 个 GPU、${n_snode}/${n_node} 个节点低于同批中位的 ${pct}%（${snodes}）" \
+        ">= 同批中位 ${pct}%" FAIL "见 straggler.json"
+    fi
+    # 拓扑分组数为 1 说明没给拓扑文件：跨 leaf 差异会混进同一个基线，
+    # 判定仍会出结论但可信度下降，必须显式标出来而不是默默通过。
+    if [ "${n_grp:-1}" -le 1 ]; then
+      report_row 6 "慢节点体检" "拓扑分组" "仅 1 组（未提供 topology.tsv）" \
+        "按 leaf/rail 分组比较" MANUAL "跨 spine 差异会混进同一基线，先跑 topo_discover.sh"
+    else
+      report_row 6 "慢节点体检" "拓扑分组" "${n_grp} 组，同组/跨组分别比较" \
+        "按 leaf/rail 分组比较" PASS
+    fi
+    # 实测收敛比：厂商宣称 1:1 无收敛时，这是唯一能证伪的实测依据。
+    # 只有 1 个拓扑组时算不出来，必须 SKIP 而不是当成"无收敛"。
+    if [ -n "$over" ]; then
+      report_le 6 "计算网拓扑" "实测收敛比" "$over" "$CLUSTER_OVERSUBSCRIPTION_MAX" ": 1" \
+        "组内 ${ibw} GB/s、跨组 ${xbw} GB/s（成对带宽中位）"
+    else
+      report_row 6 "计算网拓扑" "实测收敛比" "N/A（仅 ${n_grp} 个拓扑组，无法比较）" \
+        "<= ${CLUSTER_OVERSUBSCRIPTION_MAX:-?} : 1" SKIP "先跑 topo_discover.sh 生成 topology.tsv"
+    fi
+    [ "$attrib" = "-" ] || echo "慢节点归因：$attrib" > "$LOG_DIR/straggler_attribution.txt"
+  fi
+else
+  report_row 6 "慢节点体检" "同批均一性" "N/A" \
+    ">= 同批中位 ${CLUSTER_STRAGGLER_MIN_RATIO:-?}%" SKIP \
+    "未执行 scripts/cluster/straggler_check.sh"
+  report_row 6 "慢节点体检" "拓扑分组" "N/A" "按 leaf/rail 分组比较" SKIP "同上"
+  report_row 6 "计算网拓扑" "实测收敛比" "N/A" "<= ${CLUSTER_OVERSUBSCRIPTION_MAX:-?} : 1" SKIP "同上"
+fi
+
 report_summary || true
 
 {

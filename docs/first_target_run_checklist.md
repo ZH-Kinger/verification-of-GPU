@@ -58,6 +58,22 @@ sudo bash scripts/install_offline_nvidia_tools.sh
 - [STOP] `nvidia-smi` 报 “driver/library version mismatch” 或无设备 →
         多半是驱动未正确装载 / Secure Boot 拦了 DKMS 模块。看 install 日志。
 - [STOP] dpkg 报缺依赖 → 记录缺哪个包；该机基础系统可能比 live 镜像更精简。
+- [ ] `nv-fabricmanager --version` 与 `nvidia-smi` 的驱动版本**完全一致**（不是主版本一致）
+- [STOP] FM 版本与驱动不一致 → FM 服务会拒绝启动、NVLink 多卡通信异常。
+        换成与驱动版本完全匹配的 FM deb，不要试图靠 `--force` 装上去。
+        现场表现具有欺骗性：`systemctl status` 报启动失败，但很多人会去查服务日志，
+        而真正的原因只是版本号差了一位。判定表 §7「FM 版本与状态」会直接判 FAIL。
+
+> **如果现场有人手工装驱动 / CUDA（不走本项目脚本），下面几条必看。**
+> 本项目脚本已经处理好，手工装最容易踩这三个：
+>
+> 1. **CUDA runfile 安装时必须取消勾选 Driver。** 驱动已由 A1 装好，
+>    CUDA 包里自带的驱动版本通常更旧，重复安装会覆盖成旧版本，
+>    表现为装完 CUDA 后 `nvidia-smi` 版本号变了、或直接 mismatch。
+> 2. **`nvidia-smi` 右上角的 CUDA Version 是"驱动支持的最高版本"，不是已安装版本。**
+>    判定要以 `nvcc -V` 为准。装的 CUDA 不能高于 `nvidia-smi` 显示的那个数。
+> 3. **Fabric Manager 的 deb 版本必须与驱动完全一致**（同上一条 STOP）。
+>    官方仓库按 Ubuntu 版本分目录，别拿错发行版的包。
 
 ### A2. 离线安装 CUDA 运行时 + NCCL（跑预编译二进制所需）
 
@@ -67,6 +83,9 @@ ldd tools/bin/all_reduce_perf | grep -E "not found"   # 期望：只缺 libcuda 
 ```
 - [ ] dpkg 成功；ldd 除 GPU 驱动库外无 “not found”
 - [STOP] 仍缺 libcudart/libnccl → 确认 runtime/ 的 deb 都装上了、ldconfig 跑过。
+- [ ] `nvcc -V` 的版本 ≥ profile 里的 `CUDA_MIN_VERSION`（B300 要 13.0，H200 要 12.4）
+- [STOP] `nvcc -V` 版本低于要求，或与 `nvidia-smi` 显示的 CUDA Version 混淆 →
+        两个数字含义不同，见 A1 下方的提示框第 2 条。
 
 ### A3. GPU 识别 / 基本健康
 

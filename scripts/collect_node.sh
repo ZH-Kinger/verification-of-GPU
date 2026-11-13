@@ -215,9 +215,15 @@ section_3_gpu() {
     if [ -n "$burn" ]; then
       log "  gpu_burn -tc ${GPU_BURN_SHORT_SECONDS}（约 $((GPU_BURN_SHORT_SECONDS / 60)) 分钟）"
       run_shell ecc_before_burn "nvidia-smi --query-gpu=index,ecc.errors.corrected.volatile.total,ecc.errors.uncorrected.aggregate.total --format=csv,noheader"
+      # 压测期间的温度必须在压测期间采。只在结束后采一次，GPU 几秒内就从
+      # 60+ °C 回落到 40 °C 左右——散热不良的机器会因此被判 PASS。
+      nvidia-smi --query-gpu=index,temperature.gpu,power.draw,clocks.sm \
+        --format=csv,noheader,nounits -l 10 > "$LOG_DIR/temp_during_burn.txt" 2>/dev/null &
+      local temp_sampler=$!
       ( cd "$(dirname "$burn")" && ./"$(basename "$burn")" -tc "$GPU_BURN_SHORT_SECONDS" ) \
         > "$LOG_DIR/gpu_burn_1h.txt" 2>&1
       echo "$?" > "$LOG_DIR/gpu_burn_1h.exit"
+      kill "$temp_sampler" 2>/dev/null; wait "$temp_sampler" 2>/dev/null
       run_shell ecc_after_burn "nvidia-smi --query-gpu=index,ecc.errors.corrected.volatile.total,ecc.errors.uncorrected.aggregate.total --format=csv,noheader"
       run_shell temp_after_burn "nvidia-smi --query-gpu=index,temperature.gpu --format=csv,noheader"
     else

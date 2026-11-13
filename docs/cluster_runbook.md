@@ -1,5 +1,28 @@
 # 多机压测 Runbook（《验收标准》§5 §6）
 
+## 最短路径（v3.1 起）
+
+```bash
+# 在 head 节点（hostfile 第一行）执行
+bash scripts/cluster/setup_ssh.sh <hostfile>              # 只需一次，会逐台提示输入密码
+sudo bash scripts/cluster/run_cluster.sh --dry-run  <hostfile>   # 先看要跑多久
+sudo bash scripts/cluster/run_cluster.sh --check-env <hostfile>  # 只查环境，不压测
+sudo bash scripts/cluster/run_cluster.sh <hostfile>              # 全流程
+```
+
+`run_cluster.sh` 内部依次跑：SSH 与路径一致性检查 → 拓扑发现 → §5 RoCE → §6 NCCL 规模 →
+§6b 慢节点体检（并发分发到各节点）→ 出判定表。
+
+- **profile 不用填**，按 `nvidia-smi` 的 GPU 型号自动识别；认不出会停下来要求指定。
+- **阶段成功才打 `.done` 标记**，中断后重跑同一条命令从断点继续；
+  要重跑某个阶段就删掉 `<log_dir>/.cluster-state/<阶段>.done`。
+- **各节点上本项目的绝对路径必须一致**，否则分发过去的命令找不到脚本；
+  `--check-env` 会先验这一条。
+- `--dry-run` 会列出每阶段预计耗时并扣掉已完成的 —— 现场靠它安排值班。
+
+下面各节是分步执行与排错细节；一键入口跑不通时按节对照。
+
+
 多机链路和单机离线链路是两套东西：它需要网络、MPI 和跨节点免密，
 **不在 U 盘 live 系统里跑**。本 runbook 覆盖两种现场情况。
 

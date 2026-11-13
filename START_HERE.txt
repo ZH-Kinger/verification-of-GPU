@@ -1,5 +1,20 @@
 GPU Offline Acceptance USB
 
+==========================================================================
+第一次上手：照这四行做
+==========================================================================
+  1) UEFI 从 U 盘启动，grub 选 "dcgm mode"（驱动放行）
+  2) sudo mkdir -p /mnt/gpu_acceptance && sudo mount -L GPU_DATA /mnt/gpu_acceptance
+     cd /mnt/gpu_acceptance/GPU_Offline_Acceptance
+  3) sudo bash scripts/run_acceptance.sh standard        # 机型自动识别，不用填 profile
+  4) 看 logs/<最新目录>/acceptance_report.html           # 判定表，PASS/FAIL/HOLD
+
+  多机（§5 §6，需网络与免密 SSH，不在 U 盘上跑）：
+     sudo bash scripts/cluster/run_cluster.sh --dry-run <hostfile>   # 先看要跑多久
+     sudo bash scripts/cluster/run_cluster.sh <hostfile>
+
+  两条都支持断点续跑：中断后重跑同一条命令即可。
+
 分区
   UBUNTU_BOOT   可 UEFI 启动的 Ubuntu Server 24.04
   GPU_DATA      本项目、工具、离线包、日志

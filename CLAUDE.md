@@ -44,9 +44,17 @@ Since v3.0 the project serves **two acceptance chains** that share one threshold
 
 - **单机离线压测** (single-node, offline, USB) — 《验收标准》§1 §2 §3 §4 §7 §8.
   `scripts/preflight.sh` → `collect_node.sh` → `check_node.sh`, plus `soak_node.sh` for §8.
-- **多机压测** (multi-node, needs network + MPI + passwordless SSH) — §5 §6.
-  `scripts/cluster/{roce_check,nccl_scale,check_cluster}.sh`. Does **not** run on the
-  live USB; the nodes use their own OS. See `docs/cluster_runbook.md`.
+- **多机压测** (multi-node, needs network + MPI + passwordless SSH) — §5 §6 §6b.
+  一键入口 `scripts/cluster/run_cluster.sh`，内部串起
+  `{topo_discover,roce_check,nccl_scale,straggler_check,check_cluster}.sh`，
+  阶段成功才打 `.done` 标记，中断后重跑同一条命令从断点继续。
+  Does **not** run on the live USB; the nodes use their own OS. See `docs/cluster_runbook.md`.
+
+  §6b 是慢节点体检（`straggler_check.sh`），与 §6 互补：§6 判「够不够快」（对绝对阈值），
+  §6b 判「有没有拖后腿的」（对同批中位数）。全员一起劣化时 §6 会 FAIL 而 §6b 全绿；
+  绝对达标但藏着一台差 15% 的机器时反过来——**两个都要**。
+  配对按拓扑分组（同 leaf / 跨 leaf）分别比较，因为 rail-optimized fabric 上
+  跨 spine 的带宽天然低于同 leaf，混在一个基线里会两头出错。
 
 **All numeric thresholds live in `profiles/<name>.env`** — GPU count, memory, TDP,
 bandwidth floors, temperature, *and* the per-model driver/CUDA/NCCL/DCGM version
@@ -67,10 +75,21 @@ standard; the 《验收标准》 table is stage 2 and needs the driver, so it ru
 
 ```bash
 sudo bash scripts/run_acceptance.sh fieldiag              # 阶段一：hardware-first, driver blocked
-sudo bash scripts/run_acceptance.sh standard b300_8gpu    # 阶段二：preflight + collect + auto-verdict
+sudo bash scripts/run_acceptance.sh standard              # 阶段二：机型自动识别 + preflight + collect + 判定
+sudo bash scripts/run_acceptance.sh standard b300_8gpu    # 同上，显式指定 profile
 sudo bash scripts/run_acceptance.sh soak <log_dir>        # §8 long soak, then re-verdict
 sudo bash scripts/run_acceptance.sh dcgm                  # legacy v1.0 collection path
+
+sudo bash scripts/cluster/run_cluster.sh --dry-run <hostfile>    # 多机：预览阶段与耗时
+sudo bash scripts/cluster/run_cluster.sh --check-env <hostfile>  # 只查环境不压测
+sudo bash scripts/cluster/run_cluster.sh <hostfile>              # 多机全流程，可断点续跑
 ```
+
+**Profile 是自动识别的**：`resolve_profile`（`lib/common.sh`）按 `nvidia-smi` 报的 GPU
+型号匹配各 profile 的 `EXPECTED_GPU_MODEL_PATTERN`。**识别不出或同时匹配多个时拒绝猜测**，
+要求显式指定——默认套一个错的 profile 比没有默认更危险：判定表会照常出，只是全错
+（B300 阈值判 H200 会全线 FAIL，人会以为是机器坏了）。`soak` 复用日志目录里的
+profile 快照，不重新识别，避免前后半程用不同阈值。
 
 `check_node.sh` emits `acceptance_report.tsv`/`.csv`/`.html`/`.txt` plus `per_gpu_detail.tsv`.
 The HTML is the customer-facing deliverable: fully self-contained (no CDN — this runs
@@ -157,6 +176,17 @@ to `CUDA_ARCH`. nccl-tests is `make MPI=0` with `NVCC_GENCODE`.
 - **§8 says 24h in the title but `-tc 64800` (18h) in the command**, and the §3 ECC row
   also says 18h. Profile follows the command; confirm with the customer before signing.
 - **fieldiag is absent from the customer standard** but is still stage 1 here.
+
+## Cloud-platform track (`platform/yicloud/`)
+
+A third way to run this toolkit: inside containers on a GPU cloud platform (仪电智算云),
+driven through its OpenAPI, with no host access. `scripts/` runs unchanged there; host-side
+items (DIMMs, fans, FM service, XID) SKIP and must come from the provider. Read
+`platform/yicloud/README.md` before touching it — its pitfall table is the result of a full
+two-node H200 run, and most rows cost an hour each. Two that bite hardest:
+the image's CUDA major version must match `tools/bin` (CUDA 12), or gpu_burn / nccl-tests
+exit 127 and a soak "finishes" in one second; and after submitting any long job, confirm real
+GPU load from inside the container before reporting it as running.
 
 ## Working on this repo
 
