@@ -850,19 +850,28 @@ if [ -d "$SOAK" ]; then
     # 每张卡的最小温度都变成 0，波动直接等于峰值 —— 一台完全正常的机器会被判 FAIL。
     peak="$(awk -F',' 'NR>1 && $3+0>0 {gsub(/ /,"",$3); if($3+0>m) m=$3+0}
                        END{if(m) printf "%.0f", m}' "$SOAK/samples.csv")"
-    fluct="$(awk -F',' -v warm="${SOAK_TEMP_WARMUP_S:-x}" 'NR>1 {
+    # 尾部同理：gpu_burn 结束后采样器还会再采一次空载温度（实测 H200 从 60 °C
+    # 掉到 35 °C），18h 全程负载下 7 °C 的波动因此被报成 26 °C。只截掉「最后一个
+    # 有负载样本」之后的部分；中途掉负载的样本照样计入，那正是要抓的问题。
+    # 旧版 samples.csv 没有利用率列（第 7 列）时不截尾。
+    fluct="$(awk -F',' -v warm="${SOAK_TEMP_WARMUP_S:-x}" '
+              FNR==1 { next }
+              NR==FNR { u=$7; gsub(/[^0-9.]/,"",u); t=$1; gsub(/ /,"",t)
+                        if(u!="" && u+0>=50 && t+0>tl) tl=t+0; next }
+              {
                 gsub(/ /,"",$1); gsub(/ /,"",$2); gsub(/ /,"",$3);
                 if($2 !~ /^[0-9]+$/ || $3 !~ /^[0-9.]+$/) next;
                 if(t0=="") t0=$1+0;
                 if(warm ~ /^[0-9]+$/ && $1+0 < t0+warm) next;
+                if(tl!="" && $1+0 > tl) next;
                 g=$2+0; v=$3+0;
                 if(!(g in mx) || v>mx[g]) mx[g]=v;
                 if(!(g in mn) || v<mn[g]) mn[g]=v }
               END{ m=0; for(g in mx){ d=mx[g]-mn[g]; if(d>m) m=d } printf "%.0f", m }' \
-              "$SOAK/samples.csv")"
+              "$SOAK/samples.csv" "$SOAK/samples.csv")"
     report_le 8 "长稳烤机" "温度峰值" "$peak" "$GPU_TEMP_MAX_C" "°C"
     if is_num "${SOAK_TEMP_WARMUP_S:-}"; then
-      report_le 8 "长稳烤机" "温度波动" "$fluct" "$GPU_TEMP_FLUCT_MAX_C" "°C" "单卡 max-min 的最大值，跳过开头 ${SOAK_TEMP_WARMUP_S}s 升温段"
+      report_le 8 "长稳烤机" "温度波动" "$fluct" "$GPU_TEMP_FLUCT_MAX_C" "°C" "单卡 max-min 的最大值，跳过开头 ${SOAK_TEMP_WARMUP_S}s 升温段与负载结束后的空载样本"
     else
       report_row 8 "长稳烤机" "温度波动" "N/A" "<= $GPU_TEMP_FLUCT_MAX_C °C" SKIP \
         "profile 未定义 SOAK_TEMP_WARMUP_S：不扣除升温段时空载样本会让正常机器判 FAIL"

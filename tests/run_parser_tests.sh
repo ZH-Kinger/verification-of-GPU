@@ -256,6 +256,12 @@ mutate_expect "长稳 NCCL 725 轮全失败" "持续 NCCL 负载" m_soak_nccl_fa
 # 采样器先于 gpu_burn 启动，首个样本是空载温度：不能算进波动
 m_soak_idle_first() { f="$1/soak/samples.csv"; { head -1 "$f"; for g in 0 1 2 3 4 5 6 7; do echo "1786000000,$g,36,125.0,1980,0x1,0"; done; tail -n +2 "$f"; } > "$f.t" && mv "$f.t" "$f"; }
 expect_verdict "长稳首个样本为空载温度" "温度波动" m_soak_idle_first PASS
+# 同理，gpu_burn 结束后还会多采一次空载温度：不能算进波动
+m_soak_idle_last() { for g in 0 1 2 3 4 5 6 7; do echo "1786009999,$g,36,125.0,1980,0x1,0" >> "$1/soak/samples.csv"; done; }
+expect_verdict "长稳末尾样本为空载温度" "温度波动" m_soak_idle_last PASS
+# 截尾只截最后一个有负载样本之后的：中途掉负载降温必须照样判 FAIL
+m_soak_idle_mid() { f="$1/soak/samples.csv"; awk -F',' -v OFS=',' 'NR>1 && $1==1786001800 {$3=40; $7=0} {print}' "$f" > "$f.t" && mv "$f.t" "$f"; }
+mutate_expect "长稳中途掉负载降温" "温度波动" m_soak_idle_mid
 m_soak_nccl_noinfo() { rm -f "$1/soak/nccl_ok_iterations.txt"; }
 expect_verdict "旧版 soak 无成功轮数" "持续 NCCL 负载" m_soak_nccl_noinfo SKIP
 
